@@ -12,7 +12,7 @@ public class CommitToNewBranchHandler extends AbstractHandler
     @Override
     public Object execute(ExecutionEvent event)
     {
-        BranchDialog dialog = new BranchDialog(HandlerUtil.getActiveShell(event), BranchDialog.Mode.COMMIT);
+        BranchDialog dialog = new BranchDialog(HandlerUtil.getActiveShell(event), BranchDialog.Mode.COMMIT, null);
         if (dialog.open() == Window.OK)
             OperationJob.schedule(event, Messages.get("commitBranchTitle"), //$NON-NLS-1$
                 (repository, monitor) -> CommitBranchOperations.commitToNewBranch(repository, dialog.branch(),

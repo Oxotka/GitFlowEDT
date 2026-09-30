@@ -4,6 +4,7 @@ import java.io.IOException;
 
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.api.CreateBranchCommand.SetupUpstreamMode;
 import org.eclipse.jgit.api.ResetCommand.ResetType;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.lib.BranchConfig;
@@ -28,6 +29,12 @@ public final class BranchOperations
     public static OperationResult checkout(Repository repository, String target, boolean create,
         IProgressMonitor monitor)
     {
+        return checkout(repository, target, create, null, monitor);
+    }
+
+    public static OperationResult checkout(Repository repository, String target, boolean create,
+        String startPoint, IProgressMonitor monitor)
+    {
         if (!RepositorySupport.isSafe(repository))
             return new OperationResult(Kind.ERROR, "Репозиторий занят другой Git-операцией."); //$NON-NLS-1$
         if (!isValidBranchName(target))
@@ -46,6 +53,9 @@ public final class BranchOperations
                 return new OperationResult(Kind.ERROR, "Ветка уже существует: " + target); //$NON-NLS-1$
             if (!create && existing == null)
                 return new OperationResult(Kind.ERROR, "Ветка не найдена: " + target); //$NON-NLS-1$
+            if (startPoint != null && (!create || !startPoint.startsWith("refs/remotes/") //$NON-NLS-1$
+                || repository.resolve(startPoint) == null))
+                return new OperationResult(Kind.ERROR, "Удалённая ветка не найдена: " + startPoint); //$NON-NLS-1$
             if (!git.status().call().isClean())
             {
                 monitor.subTask("Сохранение локальных изменений"); //$NON-NLS-1$
@@ -58,7 +68,10 @@ public final class BranchOperations
             try
             {
                 monitor.subTask("Переключение на " + target); //$NON-NLS-1$
-                git.checkout().setName(target).setCreateBranch(create).call();
+                var command = git.checkout().setName(target).setCreateBranch(create);
+                if (startPoint != null)
+                    command.setStartPoint(startPoint).setUpstreamMode(SetupUpstreamMode.TRACK);
+                command.call();
             }
             catch (GitAPIException e)
             {

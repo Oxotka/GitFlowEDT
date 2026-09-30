@@ -90,6 +90,38 @@ public class BranchOperationsTest
         }
     }
 
+    @Test
+    public void remoteSelectionCreatesTrackingBranchAndRestoresDirtyTree() throws Exception
+    {
+        Path directory = Files.createTempDirectory("gitflow-remote-checkout-"); //$NON-NLS-1$
+        Path bare = directory.resolve("origin.git"); //$NON-NLS-1$
+        Path sourceDir = directory.resolve("source"); //$NON-NLS-1$
+        Path work = directory.resolve("work"); //$NON-NLS-1$
+        try (Git origin = Git.init().setBare(true).setDirectory(bare.toFile()).call();
+             Git source = Git.init().setDirectory(sourceDir.toFile()).call())
+        {
+            commit(source, sourceDir, "base\n"); //$NON-NLS-1$
+            source.remoteAdd().setName("origin").setUri(new URIish(bare.toUri().toString())).call(); //$NON-NLS-1$
+            source.push().setRemote("origin").add(source.getRepository().getFullBranch()).call(); //$NON-NLS-1$
+            source.checkout().setCreateBranch(true).setName("feature/topic").call(); //$NON-NLS-1$
+            commit(source, sourceDir, "feature\n"); //$NON-NLS-1$
+            source.push().setRemote("origin").add(source.getRepository().getFullBranch()).call(); //$NON-NLS-1$
+            try (Git local = Git.cloneRepository().setURI(bare.toUri().toString())
+                .setDirectory(work.toFile()).call())
+            {
+                Files.writeString(work.resolve("note.txt"), "dirty"); //$NON-NLS-1$ //$NON-NLS-2$
+                OperationResult result = BranchOperations.checkout(local.getRepository(), "feature/topic", true, //$NON-NLS-1$
+                    "refs/remotes/origin/feature/topic", new NullProgressMonitor()); //$NON-NLS-1$
+                assertTrue(result.toString(), result.succeeded());
+                assertEquals("feature/topic", local.getRepository().getBranch()); //$NON-NLS-1$
+                assertEquals("origin", local.getRepository().getConfig().getString( //$NON-NLS-1$
+                    "branch", "feature/topic", "remote")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                assertEquals("dirty", Files.readString(work.resolve("note.txt"))); //$NON-NLS-1$ //$NON-NLS-2$
+                assertTrue(local.stashList().call().isEmpty());
+            }
+        }
+    }
+
     private static void commit(Git git, Path directory, String contents) throws Exception
     {
         Files.writeString(directory.resolve("file.txt"), contents); //$NON-NLS-1$

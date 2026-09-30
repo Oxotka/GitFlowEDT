@@ -48,7 +48,7 @@ final class OperationJob
         schedule(repository, HandlerUtil.getActiveShell(event), title, operation, confirmedOperation);
     }
 
-    private static void schedule(Repository repository, Shell shell, String title,
+    static void schedule(Repository repository, Shell shell, String title,
         BiFunction<Repository, IProgressMonitor, OperationResult> operation,
         BiFunction<Repository, IProgressMonitor, OperationResult> confirmedOperation)
     {

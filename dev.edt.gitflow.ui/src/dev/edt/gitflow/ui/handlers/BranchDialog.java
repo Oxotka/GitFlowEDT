@@ -1,6 +1,9 @@
 package dev.edt.gitflow.ui.handlers;
 
+import java.io.IOException;
+
 import org.eclipse.jface.dialogs.TitleAreaDialog;
+import org.eclipse.jgit.lib.Repository;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
@@ -16,6 +19,7 @@ final class BranchDialog extends TitleAreaDialog
     enum Mode { CHECKOUT, COMMIT, MOVE }
 
     private final Mode mode;
+    private final Repository repository;
     private Text branchField;
     private Text messageField;
     private Button createButton;
@@ -28,11 +32,14 @@ final class BranchDialog extends TitleAreaDialog
     private boolean returnToOriginal;
     private boolean push;
     private boolean stageTracked;
+    private BranchPicker.Choice selectedChoice;
+    private String startPoint;
 
-    BranchDialog(Shell parentShell, Mode mode)
+    BranchDialog(Shell parentShell, Mode mode, Repository repository)
     {
         super(parentShell);
         this.mode = mode;
+        this.repository = repository;
     }
 
     @Override
@@ -48,9 +55,23 @@ final class BranchDialog extends TitleAreaDialog
         new Label(fields, SWT.NONE).setText(Messages.get("branchName")); //$NON-NLS-1$
         branchField = new Text(fields, SWT.BORDER);
         branchField.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        branchField.addModifyListener(event -> selectedChoice = null);
         if (mode != Mode.COMMIT)
         {
             createButton = checkbox(fields, Messages.get("createBranch"), false); //$NON-NLS-1$
+            try
+            {
+                new BranchPicker(fields, repository, mode == Mode.CHECKOUT, choice ->
+                {
+                    branchField.setText(choice.localName());
+                    selectedChoice = choice;
+                    createButton.setSelection(choice.remote() && !choice.localExists());
+                });
+            }
+            catch (IOException e)
+            {
+                setErrorMessage(Messages.get("branchListFailed") + " " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
+            }
         }
         if (mode == Mode.COMMIT)
         {
@@ -95,6 +116,8 @@ final class BranchDialog extends TitleAreaDialog
             }
         }
         create = mode == Mode.COMMIT || createButton != null && createButton.getSelection();
+        startPoint = selectedChoice != null && selectedChoice.remote() && create
+            ? selectedChoice.ref() : null;
         returnToOriginal = returnButton != null && returnButton.getSelection();
         push = pushButton != null && pushButton.getSelection();
         stageTracked = stageButton != null && stageButton.getSelection();
@@ -104,6 +127,7 @@ final class BranchDialog extends TitleAreaDialog
     String branch() { return branch; }
     String commitMessage() { return commitMessage; }
     boolean createBranch() { return create; }
+    String startPoint() { return startPoint; }
     boolean returnToOriginal() { return returnToOriginal; }
     boolean push() { return push; }
     boolean stageTracked() { return stageTracked; }
