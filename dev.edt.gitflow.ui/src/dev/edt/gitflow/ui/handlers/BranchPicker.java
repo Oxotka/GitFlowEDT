@@ -44,12 +44,16 @@ final class BranchPicker
     private final Set<String> favorites = new LinkedHashSet<>();
     private final Preferences preferences;
     private final Consumer<Choice> onSelect;
+    private final Runnable onActivate;
+    private final String currentBranch;
     private Choice selected;
 
     BranchPicker(Composite parent, Repository repository, boolean includeRemote,
-        Consumer<Choice> onSelect) throws IOException
+        Consumer<Choice> onSelect, Runnable onActivate) throws IOException
     {
         this.onSelect = onSelect;
+        this.onActivate = onActivate;
+        currentBranch = repository.getBranch();
         String id = UUID.nameUUIDFromBytes(repository.getDirectory().getAbsolutePath()
             .getBytes(StandardCharsets.UTF_8)).toString();
         preferences = InstanceScope.INSTANCE.getNode("dev.edt.gitflow.ui").node("favorites").node(id); //$NON-NLS-1$ //$NON-NLS-2$
@@ -94,6 +98,31 @@ final class BranchPicker
         treeData.widthHint = 400;
         tree.setLayoutData(treeData);
         search.addModifyListener(event -> rebuild());
+        search.addListener(SWT.KeyDown, event ->
+        {
+            if (event.keyCode == SWT.ARROW_DOWN)
+            {
+                TreeItem first = firstLeaf();
+                if (first != null)
+                {
+                    tree.setSelection(first);
+                    choose((Choice) first.getData());
+                    tree.setFocus();
+                }
+            }
+        });
+        search.addListener(SWT.DefaultSelection, event ->
+        {
+            if (!search.getText().isBlank())
+            {
+                TreeItem first = firstLeaf();
+                if (first != null)
+                {
+                    choose((Choice) first.getData());
+                    onActivate.run();
+                }
+            }
+        });
         tree.addListener(SWT.Selection, event ->
         {
             selected = (Choice) ((TreeItem) event.item).getData();
@@ -102,8 +131,32 @@ final class BranchPicker
             if (selected != null)
                 onSelect.accept(selected);
         });
+        tree.addListener(SWT.DefaultSelection, event ->
+        {
+            if (event.item instanceof TreeItem item && item.getData() instanceof Choice choice)
+            {
+                choose(choice);
+                onActivate.run();
+            }
+            else if (event.item instanceof TreeItem item)
+                item.setExpanded(!item.getExpanded());
+        });
         favoriteButton.addListener(SWT.Selection, event -> toggleFavorite());
         rebuild();
+    }
+
+    void focusSearch()
+    {
+        if (!search.isDisposed())
+            search.setFocus();
+    }
+
+    private void choose(Choice choice)
+    {
+        selected = choice;
+        favoriteButton.setEnabled(true);
+        updateFavoriteButton();
+        onSelect.accept(choice);
     }
 
     private void toggleFavorite()
@@ -149,15 +202,14 @@ final class BranchPicker
         TreeItem remote = root(Messages.get("remoteBranches")); //$NON-NLS-1$
         for (Choice branch : branches)
         {
-            if (!branch.name().toLowerCase(Locale.ROOT).contains(query))
-                continue;
             if (favorites.contains(branch.ref()))
             {
                 TreeItem item = new TreeItem(starred, SWT.NONE);
-                item.setText(branch.name());
+                item.setText(displayName(branch));
                 item.setData(branch);
             }
-            addGrouped(branch.remote() ? remote : local, branch);
+            if (branch.name().toLowerCase(Locale.ROOT).contains(query))
+                addGrouped(branch.remote() ? remote : local, branch);
         }
         starred.setExpanded(true);
         local.setExpanded(true);
@@ -171,6 +223,7 @@ final class BranchPicker
         selected = null;
         favoriteButton.setEnabled(false);
         updateFavoriteButton();
+        onSelect.accept(null);
     }
 
     private TreeItem root(String label)
@@ -180,7 +233,13 @@ final class BranchPicker
         return item;
     }
 
-    private static void addGrouped(TreeItem root, Choice branch)
+    private String displayName(Choice branch)
+    {
+        return branch.name() + (!branch.remote() && branch.name().equals(currentBranch)
+            ? " " + Messages.get("currentBranchSuffix") : ""); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+    }
+
+    private void addGrouped(TreeItem root, Choice branch)
     {
         String[] parts = branch.name().split("/"); //$NON-NLS-1$
         TreeItem parent = root;
@@ -201,9 +260,42 @@ final class BranchPicker
                 item.setText(parts[i]);
             }
             if (i == parts.length - 1)
+            {
                 item.setData(branch);
+                if (!branch.remote() && branch.name().equals(currentBranch))
+                    item.setText(parts[i] + " " + Messages.get("currentBranchSuffix")); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            else
+                item.setExpanded(true);
             parent = item;
         }
+    }
+
+    private TreeItem firstLeaf()
+    {
+        for (TreeItem root : tree.getItems())
+        {
+            if (!search.getText().isBlank()
+                && root.getText().equals(Messages.get("favorites"))) //$NON-NLS-1$
+                continue;
+            TreeItem found = firstLeaf(root);
+            if (found != null)
+                return found;
+        }
+        return null;
+    }
+
+    private static TreeItem firstLeaf(TreeItem item)
+    {
+        if (item.getData() instanceof Choice)
+            return item;
+        for (TreeItem child : item.getItems())
+        {
+            TreeItem found = firstLeaf(child);
+            if (found != null)
+                return found;
+        }
+        return null;
     }
 
     private void select(String ref)
@@ -214,9 +306,7 @@ final class BranchPicker
             if (found != null)
             {
                 tree.setSelection(found);
-                selected = (Choice) found.getData();
-                favoriteButton.setEnabled(true);
-                updateFavoriteButton();
+                choose((Choice) found.getData());
                 return;
             }
         }

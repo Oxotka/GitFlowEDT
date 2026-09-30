@@ -55,18 +55,42 @@ final class BranchDialog extends TitleAreaDialog
         new Label(fields, SWT.NONE).setText(Messages.get("branchName")); //$NON-NLS-1$
         branchField = new Text(fields, SWT.BORDER);
         branchField.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
-        branchField.addModifyListener(event -> selectedChoice = null);
+        branchField.addModifyListener(event ->
+        {
+            selectedChoice = null;
+            if (createButton != null)
+            {
+                createButton.setEnabled(true);
+                createButton.setSelection(false);
+                createButton.setText(Messages.get("createBranch")); //$NON-NLS-1$
+            }
+        });
         if (mode != Mode.COMMIT)
         {
             createButton = checkbox(fields, Messages.get("createBranch"), false); //$NON-NLS-1$
             try
             {
-                new BranchPicker(fields, repository, mode == Mode.CHECKOUT, choice ->
+                BranchPicker picker = new BranchPicker(fields, repository, mode == Mode.CHECKOUT, choice ->
                 {
-                    branchField.setText(choice.localName());
-                    selectedChoice = choice;
-                    createButton.setSelection(choice.remote() && !choice.localExists());
-                });
+                    if (choice == null)
+                    {
+                        branchField.setText(""); //$NON-NLS-1$
+                        createButton.setSelection(false);
+                        setMessage(null);
+                    }
+                    else
+                    {
+                        branchField.setText(choice.localName());
+                        selectedChoice = choice;
+                        createButton.setSelection(choice.remote() && !choice.localExists());
+                        createButton.setEnabled(!choice.remote());
+                        setMessage(choice.remote()
+                            ? Messages.get(choice.localExists() ? "remoteUsesLocal" : "remoteCreatesLocal") //$NON-NLS-1$ //$NON-NLS-2$
+                                + " " + choice.localName() //$NON-NLS-1$
+                            : null);
+                    }
+                }, this::okPressed);
+                getShell().getDisplay().asyncExec(picker::focusSearch);
             }
             catch (IOException e)
             {
