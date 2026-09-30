@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>dev.edt.gitflow</groupId>
+  <artifactId>dev.edt.gitflow.parent</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <packaging>pom</packaging>
+
+  <name>Git Flow Ops — parent</name>
+  <description>Потоковые Git-операции для 1C:EDT. Спека: SPEC.md.</description>
+
+  <modules>
+    <module>dev.edt.gitflow.core</module>
+    <module>dev.edt.gitflow.ui</module>
+  </modules>
+
+  <properties>
+    <tycho.version>4.0.12</tycho.version>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.eclipse.tycho</groupId>
+        <artifactId>tycho-maven-plugin</artifactId>
+        <version>${tycho.version}</version>
+        <extensions>true</extensions>
+      </plugin>
+      <plugin>
+        <groupId>org.eclipse.tycho</groupId>
+        <artifactId>target-platform-configuration</artifactId>
+        <version>${tycho.version}</version>
+        <configuration>
+          <target>
+            <file>${maven.multiModuleProjectDirectory}/releng/edt-2026-1.target</file>
+          </target>
+          <!-- EDT 2026.1 на этой машине — x86_64 (Rosetta), SWT-классы лежат
+               в платформенном фрагменте org.eclipse.swt.cocoa.macosx.x86_64.
+               Пины среду резолва, иначе classpath без SWT → 'missing type Shell'. -->
+          <environments>
+            <environment>
+              <os>macosx</os>
+              <ws>cocoa</ws>
+              <arch>x86_64</arch>
+            </environment>
+          </environments>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>
