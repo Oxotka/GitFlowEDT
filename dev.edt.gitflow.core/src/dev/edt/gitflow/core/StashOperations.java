@@ -85,7 +85,8 @@ public final class StashOperations
                 return new Result(Outcome.ERROR, "Список стешей изменился. Стеш не применён."); //$NON-NLS-1$
             try
             {
-                git.stashApply().setStashRef(stashId).call();
+                git.stashApply().setStashRef(stashId).setRestoreIndex(true)
+                    .setRestoreUntracked(true).call();
             }
             catch (StashApplyFailureException e)
             {

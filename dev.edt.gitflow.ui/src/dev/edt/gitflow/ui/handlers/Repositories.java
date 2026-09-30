@@ -3,6 +3,10 @@ package dev.edt.gitflow.ui.handlers;
 import java.util.Set;
 
 import org.eclipse.core.resources.IResource;
+import org.eclipse.core.resources.IProject;
+import org.eclipse.core.resources.ResourcesPlugin;
+import org.eclipse.core.runtime.CoreException;
+import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.IAdaptable;
 import org.eclipse.jface.viewers.IStructuredSelection;
 import org.eclipse.jface.viewers.LabelProvider;
@@ -23,18 +27,9 @@ final class Repositories
 
     static Repository select(ExecutionEvent event)
     {
-        ISelection selection = HandlerUtil.getCurrentSelection(event);
-        if (selection instanceof IStructuredSelection structured && !structured.isEmpty())
-        {
-            IResource resource = adapt(structured.getFirstElement());
-            Repository repository = RepositorySupport.resolveFor(resource);
-            if (repository != null)
-                return repository;
-        }
-        IEditorInput input = HandlerUtil.getActiveEditorInput(event);
-        Repository editorRepository = RepositorySupport.resolveFor(adapt(input));
-        if (editorRepository != null)
-            return editorRepository;
+        Repository selected = RepositorySupport.resolveFor(selectedResource(event));
+        if (selected != null)
+            return selected;
 
         Set<Repository> repositories = RepositorySupport.allRepositories();
         if (repositories.size() == 1)
@@ -58,10 +53,32 @@ final class Repositories
         return dialog.open() == org.eclipse.jface.window.Window.OK ? (Repository) dialog.getFirstResult() : null;
     }
 
+    static IResource selectedResource(ExecutionEvent event)
+    {
+        ISelection selection = HandlerUtil.getCurrentSelection(event);
+        if (selection instanceof IStructuredSelection structured && !structured.isEmpty())
+        {
+            IResource resource = adapt(structured.getFirstElement());
+            if (resource != null)
+                return resource;
+        }
+        IEditorInput input = HandlerUtil.getActiveEditorInput(event);
+        return adapt(input);
+    }
+
     private static IResource adapt(Object object)
     {
         if (object instanceof IResource resource)
             return resource;
         return object instanceof IAdaptable adaptable ? adaptable.getAdapter(IResource.class) : null;
+    }
+
+    static void refresh(Repository repository, IProgressMonitor monitor) throws CoreException
+    {
+        for (IProject project : ResourcesPlugin.getWorkspace().getRoot().getProjects())
+        {
+            if (project.isOpen() && repository.equals(RepositorySupport.resolveFor(project)))
+                project.refreshLocal(IResource.DEPTH_INFINITE, monitor);
+        }
     }
 }

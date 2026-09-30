@@ -5,10 +5,7 @@ import org.eclipse.core.commands.ExecutionEvent;
 import org.eclipse.jface.dialogs.MessageDialog;
 import org.eclipse.ui.handlers.HandlerUtil;
 
-/**
- * Команда-приветствие (фаза 0): проверяет, что плагин установлен и виден в EDT.
- * Удаляется в фазе 1.
- */
+/** Shows that Git Flow Ops is installed in EDT. */
 public class HelloHandler extends AbstractHandler
 {
     @Override

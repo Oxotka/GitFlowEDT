@@ -22,6 +22,12 @@ public final class RepositorySupport
         return mapping == null ? null : mapping.getRepository();
     }
 
+    public static String relativePath(IResource resource)
+    {
+        RepositoryMapping mapping = resource == null ? null : RepositoryMapping.getMapping(resource);
+        return mapping == null ? null : mapping.getRepoRelativePath(resource);
+    }
+
     public static Set<Repository> allRepositories()
     {
         Set<Repository> repositories = new LinkedHashSet<>();

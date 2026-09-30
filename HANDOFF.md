@@ -1,125 +1,55 @@
-# HANDOFF — передача состояния между моделями
+# HANDOFF — состояние Git Flow Ops
 
-Дата: 2026-09-30. Проект: **Git Flow Ops** — плагин потоковых Git-операций для 1C:EDT.
+Дата: 2026-09-30. Основная спецификация — `SPEC.md`; порядок оставшихся работ —
+`PLAN.md`; инструкция для установки — `README.md`. Целевая среда пользователя:
+Windows, EDT 2025.2.6. Mac с EDT 2026.1.1 используется для разработки и сборки.
 
-**Источники истины:**
-- `SPEC.md` — ЧТО делаем: архитектура, спецификации команд §5, требования §6,
-  критерии приёмки §7, дорожная карта §8, открытые вопросы §9, справочные факты §10.
-  **Читать первым.**
-- `README.md` — как собирать/ставить.
-- Этот файл — ТЕКУЩЕЕ СОСТОЯНИЕ и что делать дальше. После выполнения задачи
-  обновляй этот файл (раздел «Статус»).
+## Что готово
 
----
+- Фаза 0 и первая версия Quick Stash / Quick Pop сохранены коммитом `cc28aea`.
+  Пользователь установил 0.1.0 через `dropins` в Windows EDT 2025.2.6 и
+  подтвердил работу Quick Stash. Остальные сценарии 0.1.0 вручную не проверялись.
+- В текущем дереве реализованы Smart Pull, Smart Push (проверка и получение перед
+  отправкой), Pull All, Smart Checkout, Undo Last Commit, Commit to New Branch,
+  Move Last Commit to Branch, Safe Commit, генератор сообщения и ссылки на GitLab,
+  GitHub и Bitbucket. Подтверждение остаётся для переписывания опубликованной
+  истории и коммита в защищённую ветку. Core-тесты работают на временных Git-репозиториях.
+- Результаты и ход команд показываются в представлении EDT «Операции» без
+  модальных окон об успехе. Формы ввода и подтверждения пока модальные.
+- Добавлены Tycho feature и p2 repository. ZIP для установки через мастер EDT:
+  `dist/gitflow-ops-0.2.0-preview.zip`; старый dropins ZIP сохранён для истории.
+- В `PLAN.md` записаны оставшиеся сценарии, панель с действиями и выбор веток
+  для переключения/слияния: группировка по `/` и избранные ветки.
 
-## Статус
+## Проверено
 
-- ✅ **Фаза 0 — инфраструктура: ЗАВЕРШЕНА.** Скелет из двух бандлов собирается
-  (`mvn verify` → BUILD SUCCESS), jar собираются. Команда-приветствие
-  `dev.edt.gitflow.ui.command.hello` (HelloHandler) — оставить до конца фазы 1.
-- 🟡 **Фаза 1 — Quick Stash / Quick Pop: реализована, ожидает проверки в EDT.**
-  Команды, выбор репозитория, фоновый Job, обновление проектов и обработка
-  конфликта добавлены. `mvn verify` проходит; временный JGit smoke-сценарий
-  подтвердил пустое дерево, untracked, успешный pop и сохранение стеша при конфликте.
-  Установочный архив: `dist/gitflow-ops-0.1.0-local.zip`.
-  После Windows-проверки сообщение о результате перенесено на завершение Job:
-  раньше оно могло появиться поверх окна ожидания того же задания.
-  На Windows EDT 2025.2.6 пользователь подтвердил появление меню и создание
-  Quick Stash в рабочем репозитории. Quick Pop, конфликты и обновлённый архив
-  в Windows ещё не проверены.
-- Спека обновлена до v0.3: прод — **Windows + EDT 2025.2.6**, разработка на Mac.
-- Коммит baseline: см. `git log` (ветка main).
+- `.tools/bin/mvn -B -o -Dmaven.repo.local=/private/tmp/gitflow-m2-review verify`
+  на Mac: BUILD SUCCESS, 16 JUnit-тестов, включая pull/push, стеш, checkout,
+  перенос коммита, safe commit и ссылки.
+- p2 ZIP содержит feature, оба бандла и metadata; `unzip -t` проходит.
+- `git diff --check` проходит. Ручная установка и новые команды 0.2.0 в Windows
+  EDT 2025.2.6 **ещё не проверены**; возможны различия в зависимостях EDT.
 
-## Среда (проверено, работает)
+## Как продолжать
 
-- Сборка: `.tools/bin/mvn -B verify` из корня. Maven 3.9.9 лежит в `.tools/`
-  (в .gitignore). Если удалён — команда восстановления в README.
-- JDK: системный Temurin 21 (BREE в манифестах JavaSE-17 — ок).
-- Target platform: `releng/edt-2026-1.target` → Directory-location на
-  `~/.p2/pool/plugins` (пул EDT 2026.1.1). **Не менять без нужды.**
-- ⚠️ Машина Apple Silicon, EDT — x86_64 под Rosetta; классы SWT лежат в фрагменте
-  `org.eclipse.swt.cocoa.macosx.x86_64`, поэтому в pom.xml зафиксирована среда резолва
-  `macosx/cocoa/x86_64` (target-platform-configuration). Симптом слёта пина —
-  ошибка ECJ «missing type Shell».
-- Сеть нужна только для закачки Maven/Tycho (один раз); резолв target platform — локальный.
+1. Для сборки используется локальный `.tools/bin/mvn` (Maven 3.9.9), системный
+   JDK 21, JavaSE-17 в манифестах. Target: `releng/edt-2026-1.target`, локальный
+   `~/.p2/pool/plugins`. Машина arm64, EDT x86_64 под Rosetta, поэтому в `pom.xml`
+   задан `macosx/cocoa/x86_64` для Tycho.
+2. До выпуска проверить p2-установку ZIP и команды на Windows EDT 2025.2.6.
+   Перед установкой 0.2.0 удалить старую `dropins/gitflow` согласно README.
+3. Для массового выпуска нужен независимый от локального p2-пула build target,
+   регрессионные сценарии конфликтов и проверка обновления через p2. Не считать
+   preview-архив публичным релизом.
+4. Не использовать `org.eclipse.*.internal` API. После правок: `mvn verify`,
+   `git diff --check`, проверка ZIP. Коммиты — на русском, без Co-Authored-By;
+   push только после успешных проверок и отдельного поручения пользователя.
 
-## Правила работы (для любой модели)
+## Известные ограничения
 
-1. Не менять `pom.xml`, `releng/`, `.gitignore` без явной причины; причину фиксировать в коммите.
-2. После любых правок — `.tools/bin/mvn -B verify` обязан быть BUILD SUCCESS.
-3. Только стабильные API: JGit `org.eclipse.jgit.api.*`, EGit публичное
-   (`org.eclipse.egit.core.project.RepositoryMapping`). **Без internal-пакетов.**
-4. Реализационные решения по спеке (выбор из опций) — фиксировать комментарием в коде
-   и строкой в SPEC §9.
-5. Код: английские идентификаторы, краткие комментарии на английском; UI-строки —
-   русские, через Messages + messages.properties/ru (образец: бандл
-   `com._1c.g5.v8.dt.egit.ui`, см. SPEC §10).
-6. Коммиты атомарные, сообщения на русском, ссылка на раздел спеки.
-
-## Реализация фазы 1 — Quick Stash / Quick Pop (SPEC §5.2, §5.3, §6.1)
-
-Реализовано в текущей версии (Smart Pull и остальное — следующими итерациями):
-
-**core** (`dev.edt.gitflow.core`):
-- `RepositorySupport`: `resolveFor(IResource)` через `RepositoryMapping.getMapping`;
-  `allRepositories()` через `RepositoryMapping` (сигнатуры проверить в
-  `~/.p2/pool/plugins/org.eclipse.egit.core_6.8.12*.jar`, при необходимости `javap`);
-  `isSafe(Repository)` — `getRepositoryState() == RepositoryState.SAFE`.
-- `StashOperations`:
-  - `hasUncommittedChanges(Repository)` — JGit `StatusCommand`;
-  - `quickStash(repo, includeUntracked, monitor)` — `StashCreateCommand`, имя
-    `WIP @ <ветка> <yyyyMMdd-HHmm>` (java.time); результат enum/record:
-    CREATED(имя) / NO_CHANGES / ERROR(сообщение);
-  - `quickPop(repo, monitor)` — `StashListCommand` → последний; пусто → NOT_FOUND;
-    `StashApplyCommand` → успех: `StashDropCommand` того же стеша; конфликт → стеш
-    НЕ удалять; результаты: APPLIED / NOT_FOUND / CONFLICTS(msg) / ERROR(msg).
-  - Без UI-зависимостей; GitAPIException → result-объект с читаемым сообщением.
-
-**ui** (`dev.edt.gitflow.ui`):
-- `Repositories` (резолвер §6.1): selection из `HandlerUtil.getCurrentSelection` →
-  adapt к `IResource` → core `resolveFor`; fallback — единственный репозиторий
-  воркспейса; иначе null → хендлер показывает «выделите проект/файл из git-репозитория».
-- `QuickStashHandler`, `QuickPopHandler` (AbstractHandler): операции в `Job`
-  (правило — `IWorkspaceRoot`); перед операцией проверка `isSafe` (иначе диалог
-  «репозиторий занят rebase/merge…»); после успеха — `refreshLocal(DEPTH_INFINITE)`
-  затронутых проектов; результаты — MessageDialog + лог через getLog().log(Status).
-- plugin.xml: команды `dev.edt.gitflow.ui.command.quickStash` («Быстрый стеш») и
-  `dev.edt.gitflow.ui.command.quickPop` («Вернуть последний стеш») в меню
-  `dev.edt.gitflow.ui.mainMenu` (после hello); подписи через %ключи в
-  plugin.properties / plugin_ru.properties.
-
-**Критично (§6.4):** при конфликте apply стеш сохраняется; никаких drop без
-успешного apply; при ошибке репозиторий в валидном состоянии, пользователю —
-понятное сообщение.
-
-**Оставшийся критерий готовности фазы 1:** проверить команды в меню «Git Flow Ops»
-после установки JAR в dropins EDT и пройти ручные сценарии на Windows EDT 2025.2.6.
-
-## После фазы 1 (порядок)
-
-1. Smart Pull §5.1: проверить fetch/rebase и сценарии конфликтов на временных
-   репозиториях; сетевые ошибки обрабатывать до удаления автосохранившегося стеша.
-2. Фаза 2: §5.4–5.7 (веточные операции). Для reset/cherry-pick сначала покрыть
-   сценарии с уже отправленным коммитом, конфликтом и грязным рабочим деревом.
-3. Фаза 3: §5.8–5.12 (Sync, все репозитории, проверки коммита, генератор, ссылки).
-4. UX: заменить модальные сообщения и окна ожидания на компактную панель внутри EDT
-   с прогрессом, итогом и действиями; отдельно согласовать вид с пользователем.
-5. Тесты: headless JUnit для core (§6.7) — отдельным бандлом `dev.edt.gitflow.core.tests`.
-6. Для точной совместимости поставить EDT 2025.2.6 на Mac через 1cedtstart
-   (нужен дистрибутив macOS с releases.1c.ru) → `releng/edt-2025-2.target` (§9.5);
-   ручной чек-лист §6.7 на Windows EDT 2025.2.6.
-
-## Известные не-проблемы / факты (не тратить время)
-
-- Интерактивный ребейз в EDT **уже есть** (EGit 1С-сборки: `RebaseInteractiveCurrent`) — не делаем.
-- Stash-API в JGit есть: `StashCreateCommand/StashApplyCommand/StashListCommand/StashDropCommand`.
-- JGit умеет `rebase --autostash` (§5.1).
-- 1С скрыла Reset/MergeTool и др. из UI (activity) — Undo Last Commit (§5.6) поэтому ценен.
-- `its.1c.ru` контент недоступен простым fetch (JS) — документация: edt.1c.ru/dev/ru.
-- Плагин-образец для структуры: `com._1c.g5.v8.dt.egit.ui_1.2.200` в пуле
-  (`unzip -p jar plugin.xml`).
-
-## История обрывов
-
-- 2026-09-30: сабагент (coder) с брифом фазы 1 упёрся в лимит квоты провайдера,
-  **ничего не записал** — фаза 1 не начата, состояние чистое (фаза 0).
+- Панель пока показывает журнал, но действия запускаются из меню. Выбор ветки —
+  простое поле ввода. Группировка по папкам и избранные записаны в `PLAN.md`.
+- Текущая target-платформа — EDT 2026.1.1. Версия 2025.2.6 проверена только
+  пользователем для старого Quick Stash; результаты новых команд ждут ручного теста.
+- Push/Fetch используют стандартные настройки JGit/EGit; сценарии авторизации
+  и серверных отклонений требуют проверки в реальной EDT.

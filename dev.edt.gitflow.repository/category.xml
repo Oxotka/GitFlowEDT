@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<site>
+   <feature id="dev.edt.gitflow.feature">
+      <category name="gitflow"/>
+   </feature>
+   <category-def name="gitflow" label="Git Flow Ops">
+      <description>Git operations for 1C:Enterprise Development Tools.</description>
+   </category-def>
+</site>

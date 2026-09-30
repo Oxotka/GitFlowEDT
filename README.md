@@ -31,30 +31,28 @@ Directory-location на `~/.p2/pool/plugins`). При переносе на др
 > поэтому в `pom.xml` среда резолва зафиксирована `macosx/cocoa/x86_64`. Если EDT
 > станет нативным arm64 — поменять `<arch>` в `target-platform-configuration`.
 
-## Установка в EDT (dropins)
+## Установка в EDT на Windows
 
-Для локальной проверки на Windows закройте EDT, откройте архив
-`dist/gitflow-ops-0.1.0-local.zip` и скопируйте находящуюся в нём папку `eclipse` в
-`<каталог EDT>\1cedt\dropins\gitflow\`. При стандартной установке через EDT Start
-каталог EDT находится в `%LOCALAPPDATA%\1C\1cedtstart\installations\<версия EDT>`.
-Итоговый путь к JAR: `<каталог EDT>\1cedt\dropins\gitflow\eclipse\plugins\`.
-После перезапуска EDT
-в верхнем меню появится **Git Flow Ops → Быстрый стеш / Вернуть последний стеш**.
-Откройте Git-проект или выберите его файл; при нескольких репозиториях без
-выделения появится окно выбора. Команда «О Git Flow Ops» служит для проверки
-загрузки плагина.
+Текущая версия для локальной проверки — `dist/gitflow-ops-0.2.0-preview.zip`.
+Это p2-репозиторий: архив не нужно распаковывать или копировать в `plugins`.
 
-Архив можно пересобрать из двух JAR после `mvn verify`; вариант установки без
-архива:
+1. Закройте EDT. Если была установлена первая версия через `dropins`, удалите
+   папку `<каталог EDT>\1cedt\dropins\gitflow` целиком. При установке через
+   EDT Start каталог EDT обычно находится в
+   `%LOCALAPPDATA%\1C\1cedtstart\installations\<версия EDT>`.
+2. Запустите EDT → **Справка → Установить новое ПО…** → **Добавить…** →
+   **Архив…** и выберите `gitflow-ops-0.2.0-preview.zip`.
+3. Выберите **Git Flow Ops**, завершите мастер и перезапустите EDT.
+4. Выделите файл или проект Git-репозитория и откройте меню **Git Flow Ops**.
+   Результаты операций появляются в панели **Операции** внутри EDT. Панель можно
+   открыть снова через **Окно → Показать представление → Другие… → Git Flow Ops → Операции**.
 
-```bash
-# после сборки
-mkdir -p <EDT>/1cedt.app/Contents/Eclipse/dropins/gitflow/eclipse/plugins
-cp dev.edt.gitflow.core/target/dev.edt.gitflow.core-0.1.0-SNAPSHOT.jar \
-   dev.edt.gitflow.ui/target/dev.edt.gitflow.ui-0.1.0-SNAPSHOT.jar \
-   <EDT>/1cedt.app/Contents/Eclipse/dropins/gitflow/eclipse/plugins/
-# перезапустить EDT
-```
+При нескольких репозиториях без выделения появится окно выбора. Если установка
+сообщает о несовместимых зависимостях, сохраните текст ошибки: новые команды
+собраны на EDT 2026.1.1 и пока не проверены в EDT 2025.2.6 на Windows.
+
+Старый `dist/gitflow-ops-0.1.0-local.zip` оставлен только для воспроизведения
+первой версии, которую пользователь уже проверил в Windows.
 
 ## Отладка (PDE)
 
@@ -68,12 +66,14 @@ cp dev.edt.gitflow.core/target/dev.edt.gitflow.core-0.1.0-SNAPSHOT.jar \
 
 ```
 dev.edt.gitflow.core   — headless-логика (JGit), без UI
-dev.edt.gitflow.ui     — команды, меню, диалоги
+dev.edt.gitflow.ui     — команды, меню, панель и диалоги
 releng/                — .target-платформа, launch-конфигурации
 SPEC.md                — спецификация (читать первым)
 ```
 
 ## Совместимость
 
-Сборка проверена с EDT 2026.1.1 на macOS. Целевая прод-среда — EDT 2025.2.6
-на Windows; проверка установки и сценариев в ней ещё требуется.
+Сборка и 16 headless-сценариев проверены с EDT 2026.1.1 на macOS. В целевой
+EDT 2025.2.6 на Windows пользователь подтвердил загрузку версии 0.1.0 и работу
+Quick Stash. Совместимость новых команд и p2-установки версии 0.2.0 на Windows
+пока требует ручной проверки.

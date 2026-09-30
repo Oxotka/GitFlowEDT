@@ -1,8 +1,6 @@
 package dev.edt.gitflow.ui.handlers;
 
 import org.eclipse.core.commands.ExecutionEvent;
-import org.eclipse.core.resources.IProject;
-import org.eclipse.core.resources.IResource;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IProgressMonitor;
@@ -12,15 +10,12 @@ import org.eclipse.core.runtime.jobs.Job;
 import org.eclipse.core.runtime.jobs.IJobChangeEvent;
 import org.eclipse.core.runtime.jobs.JobChangeAdapter;
 import org.eclipse.jgit.lib.Repository;
-import org.eclipse.jface.dialogs.MessageDialog;
-import org.eclipse.swt.widgets.Display;
-import org.eclipse.swt.widgets.Shell;
-import org.eclipse.ui.handlers.HandlerUtil;
 
 import dev.edt.gitflow.core.RepositorySupport;
 import dev.edt.gitflow.core.StashOperations;
 import dev.edt.gitflow.core.StashOperations.Outcome;
 import dev.edt.gitflow.core.StashOperations.Result;
+import dev.edt.gitflow.ui.views.GitFlowView;
 
 final class StashJob
 {
@@ -35,11 +30,9 @@ final class StashJob
         Repository repository = Repositories.select(event);
         if (repository == null)
         {
-            MessageDialog.openInformation(HandlerUtil.getActiveShell(event), Messages.get("title"), //$NON-NLS-1$
-                Messages.get("selectResource")); //$NON-NLS-1$
+            GitFlowView.publish(Messages.get("selectResource")); //$NON-NLS-1$
             return;
         }
-        Shell shell = HandlerUtil.getActiveShell(event);
         String[] completionMessage = new String[1];
         Job job = new Job(pop ? Messages.get("popJob") : Messages.get("stashJob")) //$NON-NLS-1$ //$NON-NLS-2$
         {
@@ -58,7 +51,7 @@ final class StashJob
                 {
                     try
                     {
-                        refreshProjects(repository, monitor);
+                        Repositories.refresh(repository, monitor);
                     }
                     catch (CoreException e)
                     {
@@ -80,19 +73,12 @@ final class StashJob
             public void done(IJobChangeEvent changeEvent)
             {
                 if (completionMessage[0] != null)
-                    show(shell, completionMessage[0]);
+                    GitFlowView.publish(completionMessage[0]);
             }
         });
+        GitFlowView.publish(Messages.get(pop ? "popJob" : "stashJob") //$NON-NLS-1$ //$NON-NLS-2$
+            + Messages.get("operationStarted")); //$NON-NLS-1$
         job.schedule();
-    }
-
-    private static void refreshProjects(Repository repository, IProgressMonitor monitor) throws CoreException
-    {
-        for (IProject project : ResourcesPlugin.getWorkspace().getRoot().getProjects())
-        {
-            if (project.isOpen() && repository.equals(RepositorySupport.resolveFor(project)))
-                project.refreshLocal(IResource.DEPTH_INFINITE, monitor);
-        }
     }
 
     private static String message(Result result)
@@ -106,15 +92,6 @@ final class StashJob
             case CONFLICTS -> Messages.get("conflicts") + result.detail(); //$NON-NLS-1$
             case ERROR -> Messages.get("error") + result.detail(); //$NON-NLS-1$
         };
-    }
-
-    private static void show(Shell shell, String message)
-    {
-        Display.getDefault().asyncExec(() ->
-        {
-            if (shell != null && !shell.isDisposed())
-                MessageDialog.openInformation(shell, Messages.get("title"), message); //$NON-NLS-1$
-        });
     }
 
     private static void log(IStatus status)
