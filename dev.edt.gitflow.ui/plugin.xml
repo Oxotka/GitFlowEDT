@@ -1,14 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <?eclipse version="3.4"?>
 <plugin>
-   <!-- Фаза 0: команда-приветствие для проверки установки.
-        Реальные команды добавляются по спеке SPEC.md §5. -->
+   <!-- Команда-приветствие остаётся для проверки установки до завершения фазы 1. -->
    <extension
          point="org.eclipse.ui.commands">
       <command
             id="dev.edt.gitflow.ui.command.hello"
             name="%command.hello.name">
       </command>
+      <command id="dev.edt.gitflow.ui.command.quickStash" name="%command.quickStash.name"/>
+      <command id="dev.edt.gitflow.ui.command.quickPop" name="%command.quickPop.name"/>
    </extension>
    <extension
          point="org.eclipse.ui.handlers">
@@ -16,6 +17,10 @@
             class="dev.edt.gitflow.ui.handlers.HelloHandler"
             commandId="dev.edt.gitflow.ui.command.hello">
       </handler>
+      <handler class="dev.edt.gitflow.ui.handlers.QuickStashHandler"
+            commandId="dev.edt.gitflow.ui.command.quickStash"/>
+      <handler class="dev.edt.gitflow.ui.handlers.QuickPopHandler"
+            commandId="dev.edt.gitflow.ui.command.quickPop"/>
    </extension>
    <extension
          point="org.eclipse.ui.menus">
@@ -29,6 +34,8 @@
                   commandId="dev.edt.gitflow.ui.command.hello"
                   mnemonic="H">
             </command>
+            <command commandId="dev.edt.gitflow.ui.command.quickStash"/>
+            <command commandId="dev.edt.gitflow.ui.command.quickPop"/>
          </menu>
       </menuContribution>
    </extension>

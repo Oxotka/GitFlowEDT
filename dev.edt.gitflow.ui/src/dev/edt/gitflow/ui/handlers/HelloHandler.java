@@ -16,8 +16,8 @@ public class HelloHandler extends AbstractHandler
     {
         MessageDialog.openInformation(
             HandlerUtil.getActiveShell(event),
-            "Git Flow Ops", //$NON-NLS-1$
-            "Git Flow Ops установлен. Команды появятся в фазе 1 (см. SPEC.md)."); //$NON-NLS-1$
+            Messages.get("title"), //$NON-NLS-1$
+            Messages.get("hello")); //$NON-NLS-1$
         return null;
     }
 }
