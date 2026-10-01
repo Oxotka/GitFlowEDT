@@ -21,6 +21,8 @@ import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Button;
 import org.eclipse.swt.widgets.Composite;
+import org.eclipse.swt.widgets.Menu;
+import org.eclipse.swt.widgets.MenuItem;
 import org.eclipse.swt.widgets.Text;
 import org.eclipse.swt.widgets.Tree;
 import org.eclipse.swt.widgets.TreeItem;
@@ -31,6 +33,10 @@ import org.osgi.service.prefs.Preferences;
 
 final class BranchPicker
 {
+    private record Folder(String path, boolean remote)
+    {
+    }
+
     record Choice(String name, String ref, boolean remote, boolean localExists)
     {
         String localName()
@@ -39,11 +45,13 @@ final class BranchPicker
         }
     }
 
+    private final Composite panel;
     private final Tree tree;
     private final Button favoriteButton;
     private final Text search;
     private final List<Choice> branches = new ArrayList<>();
     private final Set<String> favorites = new LinkedHashSet<>();
+    private final Set<String> pinnedFolders = new LinkedHashSet<>();
     private final Preferences preferences;
     private final Consumer<Choice> onSelect;
     private final Runnable onActivate;
@@ -62,6 +70,9 @@ final class BranchPicker
         String saved = preferences.get("refs", ""); //$NON-NLS-1$ //$NON-NLS-2$
         if (!saved.isEmpty())
             favorites.addAll(List.of(saved.split("\n"))); //$NON-NLS-1$
+        String savedFolders = preferences.get("folders", ""); //$NON-NLS-1$ //$NON-NLS-2$
+        if (!savedFolders.isEmpty())
+            pinnedFolders.addAll(List.of(savedFolders.split("\n"))); //$NON-NLS-1$
         Set<String> localNames = new LinkedHashSet<>();
         for (Ref ref : repository.getRefDatabase().getRefsByPrefix(Constants.R_HEADS))
         {
@@ -83,7 +94,7 @@ final class BranchPicker
         }
         branches.sort(Comparator.comparing(Choice::name));
 
-        Composite panel = new Composite(parent, SWT.NONE);
+        panel = new Composite(parent, SWT.NONE);
         panel.setLayout(new GridLayout(2, false));
         GridData panelData = new GridData(SWT.FILL, SWT.FILL, true, true);
         panelData.horizontalSpan = 2;
@@ -144,7 +155,37 @@ final class BranchPicker
                 item.setExpanded(!item.getExpanded());
         });
         favoriteButton.addListener(SWT.Selection, event -> toggleFavorite());
+        Menu menu = new Menu(tree);
+        tree.setMenu(menu);
+        tree.addListener(SWT.MenuDetect, event ->
+        {
+            TreeItem item = event.x < 0 || event.y < 0 ? null
+                : tree.getItem(tree.toControl(event.x, event.y));
+            if ((event.x < 0 || event.y < 0) && tree.getSelectionCount() == 1)
+                item = tree.getSelection()[0];
+            if (item != null && item.getData() instanceof Folder folder && folder.remote())
+                tree.setData("contextFolder", folder); //$NON-NLS-1$
+            else
+                event.doit = false;
+        });
+        menu.addListener(SWT.Show, event ->
+        {
+            for (MenuItem item : menu.getItems())
+                item.dispose();
+            if (!(tree.getData("contextFolder") instanceof Folder folder)) //$NON-NLS-1$
+                return;
+            tree.setData("contextFolder", null); //$NON-NLS-1$
+            MenuItem pin = new MenuItem(menu, SWT.PUSH);
+            pin.setText(Messages.get(pinnedFolders.contains(folder.path())
+                ? "unpinFolder" : "pinFolder")); //$NON-NLS-1$ //$NON-NLS-2$
+            pin.addListener(SWT.Selection, click -> toggleFolder(folder.path()));
+        });
         rebuild();
+    }
+
+    Composite control()
+    {
+        return panel;
     }
 
     void focusSearch()
@@ -189,6 +230,30 @@ final class BranchPicker
         select(ref);
     }
 
+    private void toggleFolder(String path)
+    {
+        boolean wasPinned = pinnedFolders.contains(path);
+        if (!pinnedFolders.add(path))
+            pinnedFolders.remove(path);
+        preferences.put("folders", String.join("\n", pinnedFolders)); //$NON-NLS-1$ //$NON-NLS-2$
+        try
+        {
+            preferences.flush();
+        }
+        catch (BackingStoreException e)
+        {
+            if (wasPinned)
+                pinnedFolders.add(path);
+            else
+                pinnedFolders.remove(path);
+            preferences.put("folders", String.join("\n", pinnedFolders)); //$NON-NLS-1$ //$NON-NLS-2$
+            MessageDialog.openError(tree.getShell(), Messages.get("title"), //$NON-NLS-1$
+                Messages.get("folderSaveFailed") + " " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
+            return;
+        }
+        rebuild();
+    }
+
     private void updateFavoriteButton()
     {
         favoriteButton.setText(Messages.get(selected != null && favorites.contains(selected.ref())
@@ -202,6 +267,23 @@ final class BranchPicker
         TreeItem starred = root(Messages.get("favorites")); //$NON-NLS-1$
         TreeItem local = root(Messages.get("localBranches")); //$NON-NLS-1$
         TreeItem remote = root(Messages.get("remoteBranches")); //$NON-NLS-1$
+        for (String path : pinnedFolders.stream().sorted().toList())
+        {
+            TreeItem pinned = new TreeItem(remote, SWT.NONE);
+            int slash = path.lastIndexOf('/');
+            String name = path.substring(slash + 1);
+            pinned.setText("★ " + name + (slash < 0 ? "" : " (" + path.substring(0, slash) + ")")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            pinned.setImage(PlatformUI.getWorkbench().getSharedImages().getImage(ISharedImages.IMG_OBJ_FOLDER));
+            pinned.setData(new Folder(path, true));
+            for (Choice branch : branches)
+                if (branch.remote() && branch.name().startsWith(path + "/") //$NON-NLS-1$
+                    && branch.name().toLowerCase(Locale.ROOT).contains(query))
+                    addGrouped(pinned, branch, branch.name().substring(path.length() + 1), path);
+            if (pinned.getItemCount() == 0)
+                pinned.dispose();
+            else
+                pinned.setExpanded(true);
+        }
         for (Choice branch : branches)
         {
             if (favorites.contains(branch.ref()))
@@ -247,7 +329,12 @@ final class BranchPicker
 
     private void addGrouped(TreeItem root, Choice branch)
     {
-        String[] parts = branch.name().split("/"); //$NON-NLS-1$
+        addGrouped(root, branch, branch.name(), ""); //$NON-NLS-1$
+    }
+
+    private void addGrouped(TreeItem root, Choice branch, String name, String prefix)
+    {
+        String[] parts = name.split("/"); //$NON-NLS-1$
         TreeItem parent = root;
         for (int i = 0; i < parts.length; i++)
         {
@@ -275,7 +362,11 @@ final class BranchPicker
                     item.setText(parts[i] + " " + Messages.get("currentBranchSuffix")); //$NON-NLS-1$ //$NON-NLS-2$
             }
             else
+            {
+                prefix = prefix.isEmpty() ? parts[i] : prefix + "/" + parts[i]; //$NON-NLS-1$
+                item.setData(new Folder(prefix, branch.remote()));
                 item.setExpanded(true);
+            }
             parent = item;
         }
     }
