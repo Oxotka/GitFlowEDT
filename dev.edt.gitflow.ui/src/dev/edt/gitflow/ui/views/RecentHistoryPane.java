@@ -16,7 +16,6 @@ import org.eclipse.swt.graphics.Point;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Composite;
-import org.eclipse.swt.widgets.Label;
 import org.eclipse.swt.widgets.Table;
 import org.eclipse.swt.widgets.TableColumn;
 import org.eclipse.swt.widgets.TableItem;
@@ -34,24 +33,33 @@ final class RecentHistoryPane extends Composite
         GridLayout layout = new GridLayout(1, false);
         layout.marginWidth = 0;
         layout.marginHeight = 0;
-        layout.verticalSpacing = 3;
         setLayout(layout);
-        Label title = new Label(this, SWT.NONE);
-        title.setText("ИСТОРИЯ · 30 последних"); //$NON-NLS-1$
         table = new Table(this, SWT.SINGLE | SWT.FULL_SELECTION | SWT.V_SCROLL | SWT.BORDER);
         table.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
         TableColumn graph = new TableColumn(table, SWT.LEFT);
-        graph.setWidth(78);
-        TableColumn subject = new TableColumn(table, SWT.LEFT);
-        subject.setWidth(160);
-        TableColumn author = new TableColumn(table, SWT.LEFT);
-        author.setWidth(100);
-        table.addListener(SWT.Resize, event -> subject.setWidth(Math.max(80,
-            table.getClientArea().width - graph.getWidth() - author.getWidth() - 4)));
+        graph.setWidth(56);
+        TableColumn message = new TableColumn(table, SWT.LEFT);
+        message.setWidth(240);
+        table.addListener(SWT.Resize, event -> message.setWidth(Math.max(80,
+            table.getClientArea().width - graph.getWidth() - 4)));
+        table.addListener(SWT.MeasureItem, event -> event.height = Math.max(event.height,
+            event.gc.getFontMetrics().getHeight() * 2 + 8));
+        table.addListener(SWT.EraseItem, event ->
+        {
+            if (event.index == 1 && event.item.getData() instanceof RecentHistory.Entry)
+                event.detail &= ~SWT.FOREGROUND;
+        });
         table.addListener(SWT.PaintItem, event ->
         {
-            if (event.index == 0 && event.item.getData() instanceof RecentHistory.Entry entry)
-                new GraphRenderer(event.gc, event.x, event.y).paint(entry.plot(), event.height);
+            if (event.item.getData() instanceof RecentHistory.Entry entry)
+            {
+                if (event.index == 0)
+                    new GraphRenderer(event.gc, event.x, event.y).paint(entry.plot(), event.height);
+                else if (event.index == 1)
+                    paintMessage(event.gc, event.x + 4, event.y + 3,
+                        message.getWidth() - 8, entry,
+                        table.getSelectionCount() > 0 && event.item == table.getSelection()[0]);
+            }
         });
         table.addListener(SWT.MouseMove, event ->
         {
@@ -79,7 +87,7 @@ final class RecentHistoryPane extends Composite
             for (RecentHistory.Entry entry : commits)
             {
                 TableItem item = new TableItem(table, SWT.NONE);
-                item.setText(new String[] { "", entry.subject(), entry.author() }); //$NON-NLS-1$
+                item.setText(new String[] { "", entry.subject() + " · " + entry.author() }); //$NON-NLS-1$ //$NON-NLS-2$
                 item.setData(entry);
             }
         }
@@ -87,6 +95,56 @@ final class RecentHistoryPane extends Composite
         {
             table.setRedraw(true);
         }
+    }
+
+    private void paintMessage(GC gc, int x, int y, int width, RecentHistory.Entry entry,
+        boolean selected)
+    {
+        if (width <= 0)
+            return;
+        Color foreground = gc.getForeground();
+        int alpha = gc.getAlpha();
+        try
+        {
+            gc.setForeground(selected ? gc.getDevice().getSystemColor(SWT.COLOR_LIST_SELECTION_TEXT)
+                : table.getForeground());
+            String first = fit(gc, entry.subject(), width);
+            String remaining = entry.subject().substring(first.length()).stripLeading();
+            int lineHeight = gc.getFontMetrics().getHeight();
+            gc.drawText(first, x, y, true);
+            String author = ellipsize(gc, entry.author(), Math.min(width, Math.max(40, width / 2)));
+            int authorWidth = gc.textExtent(author).x;
+            String second = ellipsize(gc, remaining,
+                width - authorWidth - gc.textExtent(" · ").x); //$NON-NLS-1$
+            if (!second.isEmpty())
+                gc.drawText(second, x, y + lineHeight, true);
+            gc.setAlpha(selected ? 255 : 170);
+            gc.drawText((second.isEmpty() ? "" : " · ") + author, //$NON-NLS-1$ //$NON-NLS-2$
+                x + gc.textExtent(second).x, y + lineHeight, true);
+        }
+        finally
+        {
+            gc.setForeground(foreground);
+            gc.setAlpha(alpha);
+        }
+    }
+
+    private static String fit(GC gc, String value, int width)
+    {
+        int end = value.length();
+        while (end > 0 && gc.textExtent(value.substring(0, end)).x > width)
+            end = value.offsetByCodePoints(end, -1);
+        return value.substring(0, end);
+    }
+
+    private static String ellipsize(GC gc, String value, int width)
+    {
+        if (width <= 0)
+            return ""; //$NON-NLS-1$
+        if (gc.textExtent(value).x <= width)
+            return value;
+        String ellipsis = "…"; //$NON-NLS-1$
+        return fit(gc, value, width - gc.textExtent(ellipsis).x).stripTrailing() + ellipsis;
     }
 
     private static final class GraphRenderer extends AbstractPlotRenderer<PlotLane, Color>

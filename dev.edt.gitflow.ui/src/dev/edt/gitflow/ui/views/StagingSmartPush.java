@@ -22,7 +22,9 @@ import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.swt.SWT;
+import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.widgets.Button;
+import org.eclipse.swt.widgets.Control;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Listener;
 import org.eclipse.ui.part.ViewPart;
@@ -37,6 +39,8 @@ final class StagingSmartPush
     private static final String HOOKED = PLUGIN_ID + ".smartPushHook"; //$NON-NLS-1$
     private static final String ORIGINAL = PLUGIN_ID + ".nativePushListener"; //$NON-NLS-1$
     private static final String PUSHING = PLUGIN_ID + ".smartPushRunning"; //$NON-NLS-1$
+    private static final String REBASE_SECTION = PLUGIN_ID + ".rebaseSection"; //$NON-NLS-1$
+    private static final String BUTTON_LABEL = PLUGIN_ID + ".buttonLabel"; //$NON-NLS-1$
 
     private StagingSmartPush()
     {
@@ -66,11 +70,46 @@ final class StagingSmartPush
             button.addListener(SWT.Selection, event -> clicked(view, button, commit, enable));
             button.setData(HOOKED, Boolean.TRUE);
             button.setToolTipText("Штатный коммит, затем Smart Push: получение и отправка"); //$NON-NLS-1$
+            attachRebaseSection(view, button);
         }
         catch (ReflectiveOperationException | SecurityException e)
         {
             log("Штатная кнопка EGit сохранена: адаптер Smart Push несовместим с этой версией.", e); //$NON-NLS-1$
         }
+    }
+
+    private static void attachRebaseSection(ViewPart view, Button button)
+    {
+        try
+        {
+            Field field = view.getClass().getDeclaredField("rebaseSection"); //$NON-NLS-1$
+            field.setAccessible(true);
+            Control section = (Control) field.get(view);
+            if (section != null)
+            {
+                button.setData(REBASE_SECTION, section);
+                section.addListener(SWT.Show, event ->
+                {
+                    if (Boolean.TRUE.equals(button.getData(PUSHING)))
+                        Display.getDefault().asyncExec(() -> hideRebaseSection(button));
+                });
+            }
+        }
+        catch (ReflectiveOperationException e)
+        {
+            log("Не удалось скрывать временные кнопки rebase во время Smart Push.", e); //$NON-NLS-1$
+        }
+    }
+
+    private static void hideRebaseSection(Button button)
+    {
+        if (button.isDisposed() || !Boolean.TRUE.equals(button.getData(PUSHING))
+            || !(button.getData(REBASE_SECTION) instanceof Control section) || section.isDisposed())
+            return;
+        section.setVisible(false);
+        if (section.getLayoutData() instanceof GridData data)
+            data.exclude = true;
+        section.getParent().layout(true);
     }
 
     private static void clicked(ViewPart view, Button button, Method commit, Method enable)
@@ -161,7 +200,15 @@ final class StagingSmartPush
         boolean confirmed, boolean committed)
     {
         if (!button.isDisposed())
+        {
+            button.setData(BUTTON_LABEL, button.getText());
             button.setData(PUSHING, Boolean.TRUE);
+            button.setText("Smart Push…"); //$NON-NLS-1$
+            button.getParent().layout(true);
+            if (button.getData(REBASE_SECTION) instanceof Control section && !section.isDisposed())
+                section.setRedraw(false);
+        }
+        hideRebaseSection(button);
         view.getViewSite().getActionBars().getStatusLineManager()
             .setMessage("Smart Push выполняется…"); //$NON-NLS-1$
         Job job = new Job("Smart Push") //$NON-NLS-1$
@@ -169,18 +216,27 @@ final class StagingSmartPush
             @Override
             protected IStatus run(IProgressMonitor monitor)
             {
-                OperationResult result = PullOperations.smartPush(repository, confirmed, monitor);
-                if (result.succeeded())
+                OperationResult result;
+                try
                 {
-                    try
+                    result = PullOperations.smartPush(repository, confirmed, monitor);
+                    if (result.succeeded())
                     {
-                        refresh(repository, monitor);
+                        try
+                        {
+                            refresh(repository, monitor);
+                        }
+                        catch (CoreException e)
+                        {
+                            result = new OperationResult(OperationResult.Kind.ERROR,
+                                result.message() + " Обновить проект в EDT не удалось: " + e.getMessage()); //$NON-NLS-1$
+                        }
                     }
-                    catch (CoreException e)
-                    {
-                        result = new OperationResult(OperationResult.Kind.ERROR,
-                            result.message() + " Обновить проект в EDT не удалось: " + e.getMessage()); //$NON-NLS-1$
-                    }
+                }
+                catch (RuntimeException e)
+                {
+                    log("Smart Push завершился с ошибкой.", e); //$NON-NLS-1$
+                    result = new OperationResult(OperationResult.Kind.ERROR, e.getMessage());
                 }
                 OperationResult outcome = result;
                 Display.getDefault().asyncExec(() -> showResult(view, button, repository,
@@ -196,7 +252,15 @@ final class StagingSmartPush
         OperationResult result, boolean committed)
     {
         if (!button.isDisposed())
+        {
             button.setData(PUSHING, null);
+            if (button.getData(REBASE_SECTION) instanceof Control section && !section.isDisposed())
+                section.setRedraw(true);
+            if (button.getData(BUTTON_LABEL) instanceof String label)
+                button.setText(label);
+            button.setData(BUTTON_LABEL, null);
+            button.getParent().layout(true);
+        }
         if (view.getSite().getShell().isDisposed())
             return;
         if (result.kind() != OperationResult.Kind.NEEDS_CONFIRMATION
