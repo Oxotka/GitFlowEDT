@@ -35,8 +35,6 @@ public final class CommitOperations
             return new OperationResult(Kind.ERROR, "Репозиторий занят другой Git-операцией."); //$NON-NLS-1$
         if (message == null || message.isBlank())
             return new OperationResult(Kind.ERROR, "Введите сообщение коммита."); //$NON-NLS-1$
-        if (!TASK_KEY.matcher(message).find())
-            return new OperationResult(Kind.ERROR, "В сообщении коммита нужен ключ задачи, например JIRA-1234."); //$NON-NLS-1$
         monitor.beginTask("Безопасный коммит", 2); //$NON-NLS-1$
         try
         {
@@ -65,6 +63,43 @@ public final class CommitOperations
         finally
         {
             monitor.done();
+        }
+    }
+
+    public static OperationResult commitAndPush(Repository repository, String message,
+        boolean stageTracked, boolean send, boolean confirmed, IProgressMonitor monitor)
+    {
+        try
+        {
+            String branch = repository.getBranch();
+            org.eclipse.jgit.lib.BranchConfig config = new org.eclipse.jgit.lib.BranchConfig(
+                repository.getConfig(), branch);
+            boolean hasRemote = config.getRemoteTrackingBranch() != null
+                || repository.getConfig().getString("remote", "origin", "url") != null; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            if (!confirmed && PROTECTED_BRANCHES.contains(branch))
+                return new OperationResult(Kind.NEEDS_CONFIRMATION,
+                    "Создать коммит в защищённой ветке " + branch + "?" //$NON-NLS-1$ //$NON-NLS-2$
+                        + (send && hasRemote ? " Затем плагин попытается отправить его." : "")); //$NON-NLS-1$ //$NON-NLS-2$
+            if (!confirmed && send && hasRemote && config.getRemoteTrackingBranch() == null)
+                return new OperationResult(Kind.NEEDS_CONFIRMATION,
+                    "После коммита настроить связь с origin/" + branch + " и отправить ветку?"); //$NON-NLS-1$ //$NON-NLS-2$
+            OperationResult committed = safeCommit(repository, message, stageTracked, true, monitor);
+            if (!committed.succeeded() || committed.kind() == Kind.NO_CHANGE)
+                return committed;
+            if (!send || !hasRemote)
+                return new OperationResult(Kind.SUCCESS,
+                    committed.message() + (send ? " Коммит сохранён локально: remote не настроен." //$NON-NLS-1$
+                        : " Коммит сохранён локально: отправка отключена.")); //$NON-NLS-1$
+            OperationResult pushed = PullOperations.smartPush(repository, true, monitor);
+            return pushed.succeeded()
+                ? new OperationResult(Kind.SUCCESS, committed.message() + " " + pushed.message()) //$NON-NLS-1$
+                : new OperationResult(Kind.ERROR,
+                    committed.message() + " Коммит остался локально. Отправка не завершена: " //$NON-NLS-1$
+                        + pushed.message());
+        }
+        catch (IOException e)
+        {
+            return new OperationResult(Kind.ERROR, e.getMessage());
         }
     }
 }

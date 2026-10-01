@@ -16,11 +16,16 @@ public class SmartCheckoutHandler extends AbstractHandler
         Repository repository = Repositories.select(event);
         if (repository == null)
             return null;
-        BranchDialog dialog = new BranchDialog(HandlerUtil.getActiveShell(event), BranchDialog.Mode.CHECKOUT, repository);
+        open(HandlerUtil.getActiveShell(event), repository);
+        return null;
+    }
+
+    public static void open(org.eclipse.swt.widgets.Shell shell, Repository repository)
+    {
+        BranchDialog dialog = new BranchDialog(shell, BranchDialog.Mode.CHECKOUT, repository);
         if (dialog.open() == Window.OK)
-            OperationJob.schedule(repository, HandlerUtil.getActiveShell(event), Messages.get("checkoutTitle"), //$NON-NLS-1$
+            OperationJob.schedule(repository, shell, Messages.get("checkoutTitle"), //$NON-NLS-1$
                 (selected, monitor) -> BranchOperations.checkout(selected, dialog.branch(), dialog.createBranch(),
                     dialog.startPoint(), monitor), null);
-        return null;
     }
 }

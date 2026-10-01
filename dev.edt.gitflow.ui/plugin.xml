@@ -7,6 +7,7 @@
             id="dev.edt.gitflow.ui.command.hello"
             name="%command.hello.name">
       </command>
+      <command id="dev.edt.gitflow.ui.command.openView" name="%command.openView.name"/>
       <command id="dev.edt.gitflow.ui.command.quickStash" name="%command.quickStash.name"/>
       <command id="dev.edt.gitflow.ui.command.quickPop" name="%command.quickPop.name"/>
       <command id="dev.edt.gitflow.ui.command.smartPull" name="%command.smartPull.name"/>
@@ -36,6 +37,8 @@
             class="dev.edt.gitflow.ui.handlers.HelloHandler"
             commandId="dev.edt.gitflow.ui.command.hello">
       </handler>
+      <handler class="dev.edt.gitflow.ui.handlers.OpenGitViewHandler"
+            commandId="dev.edt.gitflow.ui.command.openView"/>
       <handler class="dev.edt.gitflow.ui.handlers.QuickStashHandler"
             commandId="dev.edt.gitflow.ui.command.quickStash"/>
       <handler class="dev.edt.gitflow.ui.handlers.QuickPopHandler"
@@ -87,10 +90,8 @@
                id="dev.edt.gitflow.ui.mainMenu"
                label="%menu.main.label"
                mnemonic="G">
-            <command
-                  commandId="dev.edt.gitflow.ui.command.hello"
-                  mnemonic="H">
-            </command>
+            <command commandId="dev.edt.gitflow.ui.command.openView"/>
+            <menu id="dev.edt.gitflow.ui.moreMenu" label="%menu.more.label">
             <command commandId="dev.edt.gitflow.ui.command.quickStash"/>
             <command commandId="dev.edt.gitflow.ui.command.quickPop"/>
             <command commandId="dev.edt.gitflow.ui.command.smartPull"/>
@@ -105,6 +106,8 @@
             <command commandId="dev.edt.gitflow.ui.command.openFile"/>
             <command commandId="dev.edt.gitflow.ui.command.openBranch"/>
             <command commandId="dev.edt.gitflow.ui.command.openCommit"/>
+            </menu>
+            <command commandId="dev.edt.gitflow.ui.command.hello"/>
          </menu>
       </menuContribution>
    </extension>

@@ -15,9 +15,29 @@ import org.junit.Test;
 
 import dev.edt.gitflow.core.BranchOperations;
 import dev.edt.gitflow.core.OperationResult;
+import dev.edt.gitflow.core.WorkingChanges;
 
 public class BranchOperationsTest
 {
+    @Test
+    public void checkoutKeepsStagedAndUnstagedFilesInTheirGroups() throws Exception
+    {
+        Path work = Files.createTempDirectory("gitflow-switch-index-"); //$NON-NLS-1$
+        try (Git git = Git.init().setDirectory(work.toFile()).call())
+        {
+            commit(git, work, "base\n"); //$NON-NLS-1$
+            Files.writeString(work.resolve("file.txt"), "staged\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            git.add().addFilepattern("file.txt").call(); //$NON-NLS-1$
+            Files.writeString(work.resolve("untracked.txt"), "new\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue(BranchOperations.checkout(git.getRepository(), "feature", true, //$NON-NLS-1$
+                new NullProgressMonitor()).succeeded());
+            WorkingChanges changes = WorkingChanges.read(git.getRepository());
+            assertEquals("file.txt", changes.staged().get(0).path()); //$NON-NLS-1$
+            assertEquals("untracked.txt", changes.unstaged().get(0).path()); //$NON-NLS-1$
+            assertTrue(git.stashList().call().isEmpty());
+        }
+    }
+
     @Test
     public void undoPublishedCommitRequiresConfirmation() throws Exception
     {

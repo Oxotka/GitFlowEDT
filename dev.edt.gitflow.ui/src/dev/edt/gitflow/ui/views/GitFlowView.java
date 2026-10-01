@@ -9,14 +9,18 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
-import org.eclipse.core.runtime.IStatus;
-import org.eclipse.core.runtime.Platform;
-import org.eclipse.core.runtime.Status;
+import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IResourceChangeEvent;
 import org.eclipse.core.resources.IResourceChangeListener;
 import org.eclipse.core.resources.ResourcesPlugin;
+import org.eclipse.core.runtime.IStatus;
+import org.eclipse.core.runtime.Platform;
+import org.eclipse.core.runtime.Status;
 import org.eclipse.core.runtime.jobs.Job;
+import org.eclipse.core.runtime.preferences.InstanceScope;
+import org.eclipse.jface.dialogs.MessageDialog;
 import org.eclipse.jface.viewers.ISelection;
 import org.eclipse.jface.viewers.ISelectionChangedListener;
 import org.eclipse.jface.viewers.ISelectionProvider;
@@ -25,6 +29,7 @@ import org.eclipse.jface.viewers.StructuredSelection;
 import org.eclipse.jgit.lib.BranchConfig;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.swt.SWT;
+import org.eclipse.swt.graphics.Point;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Button;
@@ -32,6 +37,11 @@ import org.eclipse.swt.widgets.Combo;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Label;
+import org.eclipse.swt.widgets.Menu;
+import org.eclipse.swt.widgets.MenuItem;
+import org.eclipse.swt.widgets.Table;
+import org.eclipse.swt.widgets.TableColumn;
+import org.eclipse.swt.widgets.TableItem;
 import org.eclipse.swt.widgets.Text;
 import org.eclipse.ui.ISelectionListener;
 import org.eclipse.ui.IWorkbenchPage;
@@ -39,14 +49,21 @@ import org.eclipse.ui.IWorkbenchPart;
 import org.eclipse.ui.IWorkbenchWindow;
 import org.eclipse.ui.PartInitException;
 import org.eclipse.ui.PlatformUI;
+import org.eclipse.ui.handlers.IHandlerService;
+import org.eclipse.ui.ide.IDE;
 import org.eclipse.ui.part.ViewPart;
+import org.osgi.service.prefs.BackingStoreException;
 
+import dev.edt.gitflow.core.CommitOperations;
 import dev.edt.gitflow.core.PullOperations;
-import dev.edt.gitflow.core.RepositorySupport;
 import dev.edt.gitflow.core.RepositoryOverview;
+import dev.edt.gitflow.core.RepositorySupport;
+import dev.edt.gitflow.core.WorkingChanges;
+import dev.edt.gitflow.core.WorkingChanges.FileChange;
 import dev.edt.gitflow.ui.handlers.Messages;
 import dev.edt.gitflow.ui.handlers.OperationJob;
 import dev.edt.gitflow.ui.handlers.Repositories;
+import dev.edt.gitflow.ui.handlers.SmartCheckoutHandler;
 
 public class GitFlowView extends ViewPart
 {
@@ -64,67 +81,188 @@ public class GitFlowView extends ViewPart
     private final IResourceChangeListener resourceListener = event -> onUi(() ->
     {
         if (instance == this)
-            scheduleOverview();
+            scheduleRefresh();
     });
     private Composite container;
     private Combo repositoryCombo;
-    private Label branchLabel;
-    private Label statusLabel;
-    private Button pullButton;
-    private Button pushButton;
-    private Button stagingButton;
-    private Text output;
-    private boolean canSync;
-    private Job overviewJob;
-    private int overviewGeneration;
+    private Button branchButton;
+    private Label countsLabel;
+    private Text messageField;
+    private Button primaryButton;
+    private Label stagedHeading;
+    private Label changesHeading;
+    private Composite stagedHeader;
+    private Table stagedTable;
+    private Composite changesHeader;
+    private Table changesTable;
+    private Label feedbackLabel;
+    private Job refreshJob;
+    private int generation;
+    private File displayedDirectory;
+    private boolean hasRemote;
+    private boolean sendAfterCommit;
+    private RepositoryOverview overview = new RepositoryOverview(0, -1, -1);
+    private WorkingChanges changes = new WorkingChanges(List.of(), List.of());
 
     @Override
     public void createPartControl(Composite parent)
     {
         instance = this;
         container = parent;
-        parent.setLayout(new GridLayout(3, false));
-        new Label(parent, SWT.NONE).setText(Messages.get("repositoryLabel")); //$NON-NLS-1$
+        GridLayout layout = new GridLayout(1, false);
+        layout.marginWidth = 8;
+        layout.marginHeight = 8;
+        layout.verticalSpacing = 7;
+        parent.setLayout(layout);
+        sendAfterCommit = InstanceScope.INSTANCE.getNode(PLUGIN_ID)
+            .getBoolean("sendAfterCommit", true); //$NON-NLS-1$
+
+        Composite header = new Composite(parent, SWT.NONE);
+        header.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        GridLayout headerLayout = new GridLayout(3, false);
+        headerLayout.marginWidth = 0;
+        headerLayout.marginHeight = 0;
+        header.setLayout(headerLayout);
+        branchButton = new Button(header, SWT.PUSH);
+        branchButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        branchButton.setToolTipText(Messages.get("switchBranchHint")); //$NON-NLS-1$
+        branchButton.addListener(SWT.Selection, event ->
+        {
+            Repository repository = selectedRepository();
+            if (repository != null)
+                SmartCheckoutHandler.open(getSite().getShell(), repository);
+        });
+        countsLabel = new Label(header, SWT.NONE);
+        countsLabel.setToolTipText(Messages.get("statusHint")); //$NON-NLS-1$
+        Button more = new Button(header, SWT.PUSH);
+        more.setText("⋯"); //$NON-NLS-1$
+        more.setToolTipText(Messages.get("moreActions")); //$NON-NLS-1$
+        more.addListener(SWT.Selection, event -> showMenu(more));
+
         repositoryCombo = new Combo(parent, SWT.DROP_DOWN | SWT.READ_ONLY);
         repositoryCombo.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
         repositoryCombo.addListener(SWT.Selection, event -> selectRepository(selectedRepository()));
-        Button refresh = new Button(parent, SWT.PUSH);
-        refresh.setText(Messages.get("refreshRepositories")); //$NON-NLS-1$
-        refresh.addListener(SWT.Selection, event -> loadRepositories());
 
-        branchLabel = new Label(parent, SWT.WRAP);
-        branchLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 3, 1));
-        statusLabel = new Label(parent, SWT.WRAP);
-        statusLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 3, 1));
-        statusLabel.setToolTipText(Messages.get("statusHint")); //$NON-NLS-1$
-        pullButton = new Button(parent, SWT.PUSH);
-        pullButton.setText(Messages.get("pullJob")); //$NON-NLS-1$
-        pullButton.setToolTipText(Messages.get("pullHint")); //$NON-NLS-1$
-        pullButton.addListener(SWT.Selection, event -> run(false));
-        pushButton = new Button(parent, SWT.PUSH);
-        pushButton.setText(Messages.get("smartPushJob")); //$NON-NLS-1$
-        pushButton.setToolTipText(Messages.get("pushHint")); //$NON-NLS-1$
-        pushButton.addListener(SWT.Selection, event -> run(true));
-        stagingButton = new Button(parent, SWT.PUSH);
-        stagingButton.setText(Messages.get("openStaging")); //$NON-NLS-1$
-        stagingButton.setToolTipText(Messages.get("stagingHint")); //$NON-NLS-1$
-        stagingButton.addListener(SWT.Selection, event -> openStaging());
+        Label messageLabel = new Label(parent, SWT.NONE);
+        messageLabel.setText(Messages.get("commitMessage")); //$NON-NLS-1$
+        messageField = new Text(parent, SWT.BORDER | SWT.SINGLE);
+        messageField.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        messageField.addModifyListener(event -> updatePrimary());
+        primaryButton = new Button(parent, SWT.PUSH);
+        primaryButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        primaryButton.addListener(SWT.Selection, event -> runPrimary());
 
-        output = new Text(parent, SWT.MULTI | SWT.READ_ONLY | SWT.V_SCROLL | SWT.WRAP);
-        output.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true, 3, 1));
-        output.setText(HISTORY.toString());
-        Button clear = new Button(parent, SWT.PUSH);
-        clear.setText(Messages.get("clearHistory")); //$NON-NLS-1$
-        clear.addListener(SWT.Selection, event ->
-        {
-            HISTORY.setLength(0);
-            output.setText(""); //$NON-NLS-1$
-        });
+        stagedHeader = sectionHeader(parent, Messages.get("stagedChanges"), true); //$NON-NLS-1$
+        stagedTable = changeTable(parent, true);
+        changesHeader = sectionHeader(parent, Messages.get("unstagedChanges"), false); //$NON-NLS-1$
+        changesTable = changeTable(parent, false);
+        feedbackLabel = new Label(parent, SWT.WRAP);
+        feedbackLabel.setLayoutData(new GridData(SWT.FILL, SWT.TOP, true, false));
+        feedbackLabel.setText(Messages.get("ready")); //$NON-NLS-1$
+
         loadRepositories();
         getSite().setSelectionProvider(selectionProvider);
         getSite().getPage().addSelectionListener(selectionListener);
         ResourcesPlugin.getWorkspace().addResourceChangeListener(resourceListener,
             IResourceChangeEvent.POST_CHANGE);
+    }
+
+    private Composite sectionHeader(Composite parent, String title, boolean staged)
+    {
+        Composite row = new Composite(parent, SWT.NONE);
+        row.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        GridLayout layout = new GridLayout(2, false);
+        layout.marginWidth = 0;
+        layout.marginHeight = 0;
+        row.setLayout(layout);
+        Label label = new Label(row, SWT.NONE);
+        label.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        label.setText(title);
+        if (staged)
+            stagedHeading = label;
+        else
+            changesHeading = label;
+        Button all = new Button(row, SWT.PUSH);
+        all.setText(staged ? "−" : "+"); //$NON-NLS-1$ //$NON-NLS-2$
+        all.setToolTipText(Messages.get(staged ? "unstageAll" : "stageAll")); //$NON-NLS-1$ //$NON-NLS-2$
+        all.addListener(SWT.Selection, event -> changeAll(staged));
+        return row;
+    }
+
+    private Table changeTable(Composite parent, boolean staged)
+    {
+        Table table = new Table(parent, SWT.SINGLE | SWT.FULL_SELECTION | SWT.BORDER);
+        GridData data = new GridData(SWT.FILL, SWT.TOP, true, false);
+        data.heightHint = 100;
+        table.setLayoutData(data);
+        TableColumn file = new TableColumn(table, SWT.LEFT);
+        file.setWidth(260);
+        TableColumn action = new TableColumn(table, SWT.CENTER);
+        action.setWidth(32);
+        table.addListener(SWT.Resize, event ->
+            file.setWidth(Math.max(100, table.getClientArea().width - action.getWidth() - 3)));
+        table.addListener(SWT.MouseDown, event ->
+        {
+            TableItem item = table.getItem(new Point(event.x, event.y));
+            if (item == null)
+                return;
+            FileChange change = (FileChange) item.getData();
+            if (item.getBounds(1).contains(event.x, event.y))
+                changeFile(change.path(), staged);
+            else
+                openDiff(change.path(), staged);
+        });
+        table.addListener(SWT.KeyDown, event ->
+        {
+            TableItem[] selected = table.getSelection();
+            if (selected.length == 0)
+                return;
+            FileChange change = (FileChange) selected[0].getData();
+            if (event.keyCode == SWT.CR)
+                openDiff(change.path(), staged);
+            else if (event.keyCode == ' ')
+                changeFile(change.path(), staged);
+        });
+        return table;
+    }
+
+    private void showMenu(Button anchor)
+    {
+        Menu menu = new Menu(anchor);
+        menuItem(menu, Messages.get("syncChanges"), () -> runSync()); //$NON-NLS-1$
+        menuItem(menu, Messages.get("pullJob"), () -> runPull()); //$NON-NLS-1$
+        menuItem(menu, Messages.get("smartPushJob"), () -> runSync()); //$NON-NLS-1$
+        new MenuItem(menu, SWT.SEPARATOR);
+        MenuItem send = new MenuItem(menu, SWT.CHECK);
+        send.setText(Messages.get("sendAfterCommit")); //$NON-NLS-1$
+        send.setSelection(sendAfterCommit);
+        send.addListener(SWT.Selection, event ->
+        {
+            sendAfterCommit = send.getSelection();
+            var preferences = InstanceScope.INSTANCE.getNode(PLUGIN_ID);
+            preferences.putBoolean("sendAfterCommit", sendAfterCommit); //$NON-NLS-1$
+            try
+            {
+                preferences.flush();
+            }
+            catch (BackingStoreException e)
+            {
+                publish(Messages.get("settingSaveFailed") + " " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            updatePrimary();
+        });
+        menuItem(menu, Messages.get("showHistory"), () -> MessageDialog.openInformation(
+            getSite().getShell(), Messages.get("title"), HISTORY.toString())); //$NON-NLS-1$ //$NON-NLS-2$
+        menu.addListener(SWT.Hide, event -> anchor.getDisplay().asyncExec(menu::dispose));
+        menu.setLocation(anchor.toDisplay(0, anchor.getSize().y));
+        menu.setVisible(true);
+    }
+
+    private static void menuItem(Menu menu, String title, Runnable action)
+    {
+        MenuItem item = new MenuItem(menu, SWT.PUSH);
+        item.setText(title);
+        item.addListener(SWT.Selection, event -> action.run());
     }
 
     private void loadRepositories()
@@ -137,29 +275,27 @@ public class GitFlowView extends ViewPart
         for (Repository repository : repositories)
             repositoryCombo.add(repository.getWorkTree().getName() + " — " //$NON-NLS-1$
                 + repository.getWorkTree().getParent());
-        if (indexOf(previous) < 0)
-            previous = null;
-        Repository candidate = previous != null ? previous : preferredRepository;
+        GridData data = (GridData) repositoryCombo.getLayoutData();
+        data.exclude = repositories.size() <= 1;
+        repositoryCombo.setVisible(!data.exclude);
+        Repository candidate = indexOf(previous) >= 0 ? previous : preferredRepository;
         if (indexOf(candidate) < 0)
-            candidate = null;
-        if (candidate == null)
             candidate = Repositories.context(getSite().getPage());
-        if (candidate == null && !repositories.isEmpty())
-            candidate = repositories.get(0);
+        if (indexOf(candidate) < 0)
+            candidate = repositories.isEmpty() ? null : repositories.get(0);
         selectRepository(candidate);
     }
 
     private void selectionChanged(IWorkbenchPart part, ISelection selection)
     {
-        if (part != this)
+        if (part == this)
+            return;
+        Repository repository = Repositories.fromSelection(selection);
+        if (repository != null)
         {
-            Repository repository = Repositories.fromSelection(selection);
-            if (repository != null)
-            {
-                if (indexOf(repository) < 0)
-                    loadRepositories();
-                selectRepository(repository);
-            }
+            if (indexOf(repository) < 0)
+                loadRepositories();
+            selectRepository(repository);
         }
     }
 
@@ -172,19 +308,16 @@ public class GitFlowView extends ViewPart
             repositoryCombo.select(index);
         selectionProvider.setSelection(index < 0 ? StructuredSelection.EMPTY
             : new StructuredSelection(repositories.get(index)));
+        preferredRepository = selectedRepository();
         updateRepository();
     }
 
     private int indexOf(Repository repository)
     {
         if (repository != null)
-        {
             for (int i = 0; i < repositories.size(); i++)
-            {
                 if (repositories.get(i).getDirectory().equals(repository.getDirectory()))
                     return i;
-            }
-        }
         return -1;
     }
 
@@ -197,118 +330,276 @@ public class GitFlowView extends ViewPart
     private void updateRepository()
     {
         Repository repository = selectedRepository();
+        File directory = repository == null ? null : repository.getDirectory();
+        if (!Objects.equals(directory, displayedDirectory))
+        {
+            displayedDirectory = directory;
+            overview = new RepositoryOverview(0, -1, -1);
+            changes = new WorkingChanges(List.of(), List.of());
+            fillTables();
+        }
         if (repository == null)
-            branchLabel.setText(Messages.get("chooseRepository")); //$NON-NLS-1$
+        {
+            branchButton.setText(Messages.get("chooseRepository")); //$NON-NLS-1$
+            hasRemote = false;
+        }
         else
         {
-            preferredRepository = repository;
             try
             {
                 String branch = repository.getBranch();
+                branchButton.setText(branch);
                 BranchConfig config = new BranchConfig(repository.getConfig(), branch);
-                String upstream = config.getRemoteTrackingBranch();
-                canSync = upstream != null || repository.getConfig().getString(
-                    "remote", "origin", "url") != null; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-                branchLabel.setText(branch + "  →  " //$NON-NLS-1$
-                    + (upstream == null ? Messages.get(canSync ? "noUpstream" : "noOrigin") //$NON-NLS-1$ //$NON-NLS-2$
-                        : upstream));
+                hasRemote = config.getRemoteTrackingBranch() != null || repository.getConfig()
+                    .getString("remote", "origin", "url") != null; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             }
             catch (IOException e)
             {
-                canSync = false;
-                branchLabel.setText(e.getMessage());
+                branchButton.setText(e.getMessage());
+                hasRemote = false;
             }
         }
-        if (repository == null)
-        {
-            canSync = false;
-        }
-        boolean enabled = repository != null && canSync && !RUNNING.containsKey(repository.getDirectory());
-        pullButton.setEnabled(enabled);
-        pushButton.setEnabled(enabled);
-        stagingButton.setEnabled(repository != null);
-        scheduleOverview();
-        container.layout(true, true);
+        branchButton.setEnabled(repository != null);
+        countsLabel.setText(""); //$NON-NLS-1$
+        updatePrimary();
+        scheduleRefresh();
     }
 
-    private void scheduleOverview()
+    private void scheduleRefresh()
     {
-        if (overviewJob != null)
-            overviewJob.cancel();
-        int generation = ++overviewGeneration;
+        if (refreshJob != null)
+            refreshJob.cancel();
+        int current = ++generation;
         Repository repository = selectedRepository();
-        if (repository == null)
-        {
-            statusLabel.setText(""); //$NON-NLS-1$
+        if (repository == null || RUNNING.containsKey(repository.getDirectory()))
             return;
-        }
-        if (RUNNING.containsKey(repository.getDirectory()))
-            return;
-        statusLabel.setText(Messages.get("statusReading")); //$NON-NLS-1$
-        overviewJob = new Job(Messages.get("statusReading")) //$NON-NLS-1$
+        refreshJob = new Job(Messages.get("statusReading")) //$NON-NLS-1$
         {
             @Override
             protected IStatus run(org.eclipse.core.runtime.IProgressMonitor monitor)
             {
-                String status;
                 try
                 {
-                    RepositoryOverview overview = RepositoryOverview.read(repository);
-                    status = Messages.get("changedFiles") + " " + overview.changedFiles() + "   " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-                        + (overview.incoming() < 0 ? Messages.get("noUpstream") //$NON-NLS-1$
-                            : "↓" + overview.incoming() + "  ↑" + overview.outgoing()); //$NON-NLS-1$ //$NON-NLS-2$
+                    WorkingChanges latestChanges = WorkingChanges.read(repository);
+                    RepositoryOverview latestOverview = RepositoryOverview.read(repository);
+                    onUi(() ->
+                    {
+                        if (instance == GitFlowView.this && current == generation)
+                        {
+                            changes = latestChanges;
+                            overview = latestOverview;
+                            fillTables();
+                            updatePrimary();
+                        }
+                    });
                 }
                 catch (Exception e)
                 {
-                    status = Messages.get("statusUnavailable") + " " + e.getMessage(); //$NON-NLS-1$ //$NON-NLS-2$
-                }
-                String result = status;
-                onUi(() ->
-                {
-                    if (instance == GitFlowView.this && generation == overviewGeneration)
+                    onUi(() ->
                     {
-                        statusLabel.setText(result);
-                        container.layout(true, true);
-                    }
-                });
+                        if (instance == GitFlowView.this && current == generation)
+                            feedbackLabel.setText(Messages.get("statusUnavailable") + " " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
+                    });
+                }
                 return Status.OK_STATUS;
             }
         };
-        overviewJob.setSystem(true);
-        overviewJob.schedule(350);
+        refreshJob.setSystem(true);
+        refreshJob.schedule(300);
     }
 
-    private void openStaging()
+    private void fillTables()
     {
-        try
-        {
-            getSite().getPage().showView("org.eclipse.egit.ui.StagingView"); //$NON-NLS-1$
-        }
-        catch (PartInitException e)
-        {
-            publish(Messages.get("stagingUnavailable") + " " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
-        }
+        fillTable(stagedTable, changes.staged(), true);
+        fillTable(changesTable, changes.unstaged(), false);
+        stagedHeading.setText(Messages.get("stagedChanges") + " · " + changes.staged().size()); //$NON-NLS-1$ //$NON-NLS-2$
+        changesHeading.setText(Messages.get("unstagedChanges") + " · " + changes.unstaged().size()); //$NON-NLS-1$ //$NON-NLS-2$
+        visible(stagedHeader, !changes.staged().isEmpty());
+        visible(stagedTable, !changes.staged().isEmpty());
+        visible(changesHeader, !changes.unstaged().isEmpty());
+        visible(changesTable, !changes.unstaged().isEmpty());
+        if (HISTORY.length() == 0)
+            feedbackLabel.setText(changes.staged().isEmpty() && changes.unstaged().isEmpty()
+                ? Messages.get("ready") : ""); //$NON-NLS-1$ //$NON-NLS-2$
+        container.layout(true, true);
     }
 
-    private void run(boolean push)
+    private static void fillTable(Table table, List<FileChange> files, boolean staged)
+    {
+        table.removeAll();
+        for (FileChange change : files)
+        {
+            TableItem item = new TableItem(table, SWT.NONE);
+            item.setText(new String[] {change.state() + "  " + change.path(), staged ? "−" : "+"}); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            item.setData(change);
+        }
+        ((GridData) table.getLayoutData()).heightHint = Math.min(7, Math.max(1, files.size()))
+            * table.getItemHeight() + 5;
+    }
+
+    private static void visible(org.eclipse.swt.widgets.Control control, boolean show)
+    {
+        control.setVisible(show);
+        ((GridData) control.getLayoutData()).exclude = !show;
+    }
+
+    private void updatePrimary()
+    {
+        Repository repository = selectedRepository();
+        boolean busy = repository == null || RUNNING.containsKey(repository.getDirectory());
+        boolean hasChanges = !changes.staged().isEmpty() || !changes.unstaged().isEmpty();
+        if (hasChanges)
+        {
+            primaryButton.setText(sendAfterCommit && hasRemote ? Messages.get("commitAndPush") //$NON-NLS-1$
+                : Messages.get("commitOnly")); //$NON-NLS-1$
+            boolean tracked = changes.unstaged().stream().anyMatch(change -> !"U".equals(change.state())); //$NON-NLS-1$
+            primaryButton.setEnabled(!busy && !messageField.getText().isBlank()
+                && (!changes.staged().isEmpty() || tracked));
+        }
+        else if (hasRemote)
+        {
+            String counts = overview.incoming() > 0 || overview.outgoing() > 0
+                ? " ↓" + overview.incoming() + " ↑" + overview.outgoing() : ""; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            primaryButton.setText(Messages.get("syncChanges") + counts); //$NON-NLS-1$
+            primaryButton.setEnabled(!busy);
+        }
+        else
+        {
+            primaryButton.setText(Messages.get("upToDate")); //$NON-NLS-1$
+            primaryButton.setEnabled(false);
+        }
+        countsLabel.setText(overview.incoming() < 0 ? "" //$NON-NLS-1$
+            : "↓" + overview.incoming() + " ↑" + overview.outgoing()); //$NON-NLS-1$ //$NON-NLS-2$
+        container.layout(true, true);
+    }
+
+    private void runPrimary()
+    {
+        if (changes.staged().isEmpty() && changes.unstaged().isEmpty())
+        {
+            runSync();
+            return;
+        }
+        Repository repository = selectedRepository();
+        if (repository == null)
+            return;
+        boolean stageTracked = changes.staged().isEmpty();
+        List<String> trackedFiles = changes.unstaged().stream()
+            .filter(change -> !"U".equals(change.state())).map(FileChange::path).toList(); //$NON-NLS-1$
+        String preview = String.join("\n", trackedFiles.stream().limit(8).toList()); //$NON-NLS-1$
+        if (trackedFiles.size() > 8)
+            preview += "\n… (" + (trackedFiles.size() - 8) + ")"; //$NON-NLS-1$ //$NON-NLS-2$
+        if (stageTracked && !MessageDialog.openQuestion(getSite().getShell(),
+            Messages.get("commitOnly"), Messages.get("stageTrackedConfirm") + "\n\n" + preview)) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            return;
+        String message = messageField.getText().trim();
+        boolean send = sendAfterCommit && hasRemote;
+        OperationJob.schedule(repository, getSite().getShell(), Messages.get("commitAndPush"), //$NON-NLS-1$
+            (selected, monitor) -> CommitOperations.commitAndPush(selected, message,
+                stageTracked, send, false, monitor),
+            (selected, monitor) -> CommitOperations.commitAndPush(selected, message,
+                stageTracked, send, true, monitor));
+    }
+
+    private void runSync()
+    {
+        Repository repository = selectedRepository();
+        if (repository != null)
+            OperationJob.schedule(repository, getSite().getShell(), Messages.get("syncChanges"), //$NON-NLS-1$
+                PullOperations::smartPush,
+                (selected, monitor) -> PullOperations.smartPush(selected, true, monitor));
+    }
+
+    private void runPull()
+    {
+        Repository repository = selectedRepository();
+        if (repository != null)
+            OperationJob.schedule(repository, getSite().getShell(), Messages.get("pullJob"), //$NON-NLS-1$
+                PullOperations::smartPull,
+                (selected, monitor) -> PullOperations.smartPull(selected, true, monitor));
+    }
+
+    private void changeFile(String path, boolean staged)
     {
         Repository repository = selectedRepository();
         if (repository != null)
             OperationJob.schedule(repository, getSite().getShell(),
-                Messages.get(push ? "smartPushJob" : "pullJob"), //$NON-NLS-1$ //$NON-NLS-2$
-                push ? PullOperations::smartPush : PullOperations::smartPull,
-                push ? (selected, monitor) -> PullOperations.smartPush(selected, true, monitor)
-                    : (selected, monitor) -> PullOperations.smartPull(selected, true, monitor));
+                Messages.get(staged ? "unstageFile" : "stageFile"), //$NON-NLS-1$ //$NON-NLS-2$
+                (selected, monitor) -> staged ? WorkingChanges.unstage(selected, path)
+                    : WorkingChanges.stage(selected, path), null);
+    }
+
+    private void changeAll(boolean staged)
+    {
+        Repository repository = selectedRepository();
+        if (repository == null)
+            return;
+        List<FileChange> files = List.copyOf(staged ? changes.staged() : changes.unstaged());
+        OperationJob.schedule(repository, getSite().getShell(),
+            Messages.get(staged ? "unstageAll" : "stageAll"), //$NON-NLS-1$ //$NON-NLS-2$
+            (selected, monitor) ->
+            {
+                for (FileChange file : files)
+                {
+                    var result = staged ? WorkingChanges.unstage(selected, file.path())
+                        : WorkingChanges.stage(selected, file.path());
+                    if (!result.succeeded())
+                        return result;
+                }
+                return new dev.edt.gitflow.core.OperationResult(
+                    dev.edt.gitflow.core.OperationResult.Kind.SUCCESS,
+                    (staged ? "Убрано из коммита: " : "Подготовлено: ") + files.size()); //$NON-NLS-1$ //$NON-NLS-2$
+            }, null);
+    }
+
+    private void openDiff(String path, boolean staged)
+    {
+        Repository repository = selectedRepository();
+        if (repository == null)
+            return;
+        File file = new File(repository.getWorkTree(), path);
+        IFile[] workspaceFiles = ResourcesPlugin.getWorkspace().getRoot()
+            .findFilesForLocationURI(file.toURI());
+        if (workspaceFiles.length == 0)
+        {
+            publish(Messages.get("fileOutsideWorkspace") + " " + path); //$NON-NLS-1$ //$NON-NLS-2$
+            return;
+        }
+        IFile workspaceFile = workspaceFiles[0];
+        selectionProvider.setSelection(new StructuredSelection(workspaceFile));
+        try
+        {
+            if (!"U".equals(findState(path, staged))) //$NON-NLS-1$
+                getSite().getService(IHandlerService.class).executeCommand(staged
+                    ? "org.eclipse.egit.ui.team.CompareIndexWithHead" //$NON-NLS-1$
+                    : "org.eclipse.egit.ui.team.CompareWithIndex", null); //$NON-NLS-1$
+            else
+                IDE.openEditor(getSite().getPage(), workspaceFile);
+        }
+        catch (Exception e)
+        {
+            try
+            {
+                IDE.openEditor(getSite().getPage(), workspaceFile);
+            }
+            catch (PartInitException failure)
+            {
+                publish(Messages.get("openDiffFailed") + " " + failure.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+        }
+    }
+
+    private String findState(String path, boolean staged)
+    {
+        return (staged ? changes.staged() : changes.unstaged()).stream()
+            .filter(change -> change.path().equals(path)).map(FileChange::state).findFirst().orElse(""); //$NON-NLS-1$
     }
 
     @Override
     public void setFocus()
     {
-        if (repositoryCombo != null && !repositoryCombo.isDisposed())
-        {
-            loadRepositories();
-            repositoryCombo.setFocus();
-        }
+        loadRepositories();
+        messageField.setFocus();
     }
 
     @Override
@@ -316,8 +607,8 @@ public class GitFlowView extends ViewPart
     {
         getSite().getPage().removeSelectionListener(selectionListener);
         ResourcesPlugin.getWorkspace().removeResourceChangeListener(resourceListener);
-        if (overviewJob != null)
-            overviewJob.cancel();
+        if (refreshJob != null)
+            refreshJob.cancel();
         instance = null;
         super.dispose();
     }
@@ -343,7 +634,7 @@ public class GitFlowView extends ViewPart
         {
             RUNNING.merge(repository.getDirectory(), 1, Integer::sum);
             if (instance != null)
-                instance.updateRepository();
+                instance.updatePrimary();
         });
     }
 
@@ -356,7 +647,8 @@ public class GitFlowView extends ViewPart
     {
         onUi(() ->
         {
-            RUNNING.computeIfPresent(repository.getDirectory(), (key, count) -> count == 1 ? null : count - 1);
+            RUNNING.computeIfPresent(repository.getDirectory(),
+                (key, count) -> count == 1 ? null : count - 1);
             if (instance != null)
                 instance.updateRepository();
         });
@@ -386,9 +678,7 @@ public class GitFlowView extends ViewPart
         if (instance == null)
         {
             IWorkbenchWindow window = PlatformUI.getWorkbench().getActiveWorkbenchWindow();
-            if (window == null)
-                return;
-            IWorkbenchPage page = window.getActivePage();
+            IWorkbenchPage page = window == null ? null : window.getActivePage();
             if (page == null)
                 return;
             try
@@ -401,10 +691,10 @@ public class GitFlowView extends ViewPart
                     new Status(IStatus.ERROR, PLUGIN_ID, e.getMessage(), e));
             }
         }
-        if (instance != null && instance.output != null && !instance.output.isDisposed())
+        if (instance != null && instance.feedbackLabel != null && !instance.feedbackLabel.isDisposed())
         {
-            instance.output.setText(HISTORY.toString());
-            instance.output.setSelection(instance.output.getCharCount());
+            instance.feedbackLabel.setText(message);
+            instance.container.layout(true, true);
         }
     }
 

@@ -205,7 +205,7 @@ final class BranchPicker
             if (favorites.contains(branch.ref()))
             {
                 TreeItem item = new TreeItem(starred, SWT.NONE);
-                item.setText(displayName(branch));
+                item.setText("★ " + displayName(branch)); //$NON-NLS-1$
                 item.setData(branch);
             }
             if (branch.name().toLowerCase(Locale.ROOT).contains(query))
@@ -215,7 +215,10 @@ final class BranchPicker
         local.setExpanded(true);
         remote.setExpanded(true);
         if (starred.getItemCount() == 0)
-            starred.dispose();
+        {
+            TreeItem empty = new TreeItem(starred, SWT.NONE);
+            empty.setText(Messages.get("favoritesEmpty")); //$NON-NLS-1$
+        }
         if (local.getItemCount() == 0)
             local.dispose();
         if (remote.getItemCount() == 0)
