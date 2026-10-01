@@ -10,6 +10,7 @@ import org.eclipse.jgit.transport.URIish;
 import org.junit.Test;
 
 import dev.edt.gitflow.core.RepositoryOverview;
+import dev.edt.gitflow.core.WorkingChanges;
 
 public class RepositoryOverviewTest
 {
@@ -38,6 +39,14 @@ public class RepositoryOverviewTest
 
                 assertEquals(new RepositoryOverview(2, 1, 1),
                     RepositoryOverview.read(local.getRepository()));
+                assertEquals(RepositoryOverview.read(local.getRepository()),
+                    RepositoryOverview.read(local.getRepository(),
+                        WorkingChanges.read(local.getRepository())));
+                local.add().addFilepattern("tracked.txt").call(); //$NON-NLS-1$
+                Files.writeString(work.resolve("tracked.txt"), "changed again"); //$NON-NLS-1$ //$NON-NLS-2$
+                assertEquals(new RepositoryOverview(2, 1, 1),
+                    RepositoryOverview.read(local.getRepository(),
+                        WorkingChanges.read(local.getRepository())));
             }
         }
     }

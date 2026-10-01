@@ -85,11 +85,6 @@ public class GitFlowView extends ViewPart
     private final List<Repository> repositories = new ArrayList<>();
     private final RepositorySelection selectionProvider = new RepositorySelection();
     private final ISelectionListener selectionListener = this::selectionChanged;
-    private final IResourceChangeListener resourceListener = event -> onUi(() ->
-    {
-        if (instance == this)
-            scheduleRefresh();
-    });
     private Composite container;
     private Combo repositoryCombo;
     private Button branchButton;
@@ -105,12 +100,36 @@ public class GitFlowView extends ViewPart
     private boolean movedToStaged;
     private CLabel feedbackLabel;
     private Job refreshJob;
+    private boolean buildInProgress;
     private int generation;
     private File displayedDirectory;
     private boolean hasRemote;
     private boolean sendAfterCommit;
     private RepositoryOverview overview = new RepositoryOverview(0, -1, -1);
     private WorkingChanges changes = new WorkingChanges(List.of(), List.of());
+    private final IResourceChangeListener resourceListener = event ->
+    {
+        int type = event.getType();
+        onUi(() ->
+        {
+            if (instance != this)
+                return;
+            if (type == IResourceChangeEvent.PRE_BUILD)
+            {
+                buildInProgress = true;
+                ++generation;
+                if (refreshJob != null)
+                    refreshJob.cancel();
+            }
+            else if (type == IResourceChangeEvent.POST_BUILD)
+            {
+                buildInProgress = false;
+                scheduleRefresh();
+            }
+            else if (!buildInProgress)
+                scheduleRefresh();
+        });
+    };
 
     @Override
     public void createPartControl(Composite parent)
@@ -177,7 +196,8 @@ public class GitFlowView extends ViewPart
         getSite().setSelectionProvider(selectionProvider);
         getSite().getPage().addSelectionListener(selectionListener);
         ResourcesPlugin.getWorkspace().addResourceChangeListener(resourceListener,
-            IResourceChangeEvent.POST_CHANGE);
+            IResourceChangeEvent.POST_CHANGE | IResourceChangeEvent.PRE_BUILD
+                | IResourceChangeEvent.POST_BUILD);
     }
 
     private Tree changeTree(Composite parent)
@@ -468,7 +488,7 @@ public class GitFlowView extends ViewPart
             refreshJob.cancel();
         int current = ++generation;
         Repository repository = selectedRepository();
-        if (repository == null || RUNNING.containsKey(repository.getDirectory()))
+        if (buildInProgress || repository == null || RUNNING.containsKey(repository.getDirectory()))
             return;
         ObjectId displayedHead = historyHead;
         refreshJob = new Job(Messages.get("statusReading")) //$NON-NLS-1$
@@ -479,7 +499,7 @@ public class GitFlowView extends ViewPart
                 try
                 {
                     WorkingChanges latestChanges = WorkingChanges.read(repository);
-                    RepositoryOverview latestOverview = RepositoryOverview.read(repository);
+                    RepositoryOverview latestOverview = RepositoryOverview.read(repository, latestChanges);
                     ObjectId latestHead = repository.resolve(Constants.HEAD);
                     List<RecentHistory.Entry> latestHistory = Objects.equals(latestHead, displayedHead)
                         ? null : RecentHistory.read(repository, 30);

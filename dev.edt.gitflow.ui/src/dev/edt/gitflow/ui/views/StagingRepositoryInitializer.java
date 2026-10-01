@@ -14,6 +14,7 @@ import org.eclipse.ui.IWindowListener;
 import org.eclipse.ui.IWorkbenchPartReference;
 import org.eclipse.ui.IWorkbenchWindow;
 import org.eclipse.ui.PlatformUI;
+import org.eclipse.ui.part.ViewPart;
 
 import dev.edt.gitflow.core.RepositorySupport;
 
@@ -90,6 +91,8 @@ public class StagingRepositoryInitializer implements IStartup
         Object view = part.getPart(false);
         if (view == null)
             return;
+        if (view instanceof ViewPart viewPart)
+            StagingSmartPush.attach(viewPart);
         try
         {
             if (view.getClass().getMethod("getCurrentRepository").invoke(view) != null) //$NON-NLS-1$
