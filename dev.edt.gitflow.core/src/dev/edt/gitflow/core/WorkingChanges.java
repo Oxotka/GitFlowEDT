@@ -7,6 +7,7 @@ import java.util.List;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.Status;
 import org.eclipse.jgit.api.errors.GitAPIException;
+import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.Repository;
 
 import dev.edt.gitflow.core.OperationResult.Kind;
@@ -68,6 +69,27 @@ public record WorkingChanges(List<FileChange> staged, List<FileChange> unstaged)
         catch (GitAPIException e)
         {
             return new OperationResult(Kind.ERROR, "Убрать файл не удалось: " + e.getMessage()); //$NON-NLS-1$
+        }
+    }
+
+    public static OperationResult resetFileToHead(Repository repository, String path)
+    {
+        if (!RepositorySupport.isSafe(repository))
+            return new OperationResult(Kind.ERROR, "Репозиторий занят другой Git-операцией."); //$NON-NLS-1$
+        try
+        {
+            Status status = Git.wrap(repository).status().call();
+            if (status.getAdded().contains(path) || status.getConflicting().contains(path)
+                || !status.getModified().contains(path) && !status.getMissing().contains(path)
+                && !status.getChanged().contains(path) && !status.getRemoved().contains(path))
+                return new OperationResult(Kind.ERROR,
+                    "Вернуть можно только файл из последнего коммита: " + path); //$NON-NLS-1$
+            Git.wrap(repository).checkout().setStartPoint(Constants.HEAD).addPath(path).call();
+            return new OperationResult(Kind.SUCCESS, "Файл возвращён к последнему коммиту: " + path); //$NON-NLS-1$
+        }
+        catch (GitAPIException e)
+        {
+            return new OperationResult(Kind.ERROR, "Вернуть файл не удалось: " + e.getMessage()); //$NON-NLS-1$
         }
     }
 }

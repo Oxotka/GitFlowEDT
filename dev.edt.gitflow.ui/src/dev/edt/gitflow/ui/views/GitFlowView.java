@@ -31,6 +31,7 @@ import org.eclipse.jface.viewers.StructuredSelection;
 import org.eclipse.jgit.lib.BranchConfig;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.swt.SWT;
+import org.eclipse.swt.custom.CLabel;
 import org.eclipse.swt.graphics.Point;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
@@ -96,7 +97,7 @@ public class GitFlowView extends ViewPart
     private boolean unstagedExpanded = true;
     private String movedPath;
     private boolean movedToStaged;
-    private Label feedbackLabel;
+    private CLabel feedbackLabel;
     private Job refreshJob;
     private int generation;
     private File displayedDirectory;
@@ -154,8 +155,10 @@ public class GitFlowView extends ViewPart
         primaryButton.addListener(SWT.Selection, event -> runPrimary());
 
         changesTree = changeTree(parent);
-        feedbackLabel = new Label(parent, SWT.WRAP);
-        feedbackLabel.setLayoutData(new GridData(SWT.FILL, SWT.TOP, true, false));
+        feedbackLabel = new CLabel(parent, SWT.NONE);
+        GridData feedbackData = new GridData(SWT.FILL, SWT.CENTER, true, false);
+        feedbackData.widthHint = 0;
+        feedbackLabel.setLayoutData(feedbackData);
         feedbackLabel.setText(Messages.get("ready")); //$NON-NLS-1$
 
         fillChangesTree();
@@ -174,10 +177,13 @@ public class GitFlowView extends ViewPart
         tree.setLayoutData(data);
         TreeColumn file = new TreeColumn(tree, SWT.LEFT);
         file.setWidth(260);
+        TreeColumn discard = new TreeColumn(tree, SWT.CENTER);
+        discard.setWidth(32);
         TreeColumn action = new TreeColumn(tree, SWT.CENTER);
         action.setWidth(32);
         tree.addListener(SWT.Resize, event ->
-            file.setWidth(Math.max(100, tree.getClientArea().width - action.getWidth() - 3)));
+            file.setWidth(Math.max(100, tree.getClientArea().width
+                - discard.getWidth() - action.getWidth() - 3)));
         tree.addListener(SWT.Expand, event -> rememberExpansion((TreeItem) event.item, true));
         tree.addListener(SWT.Collapse, event -> rememberExpansion((TreeItem) event.item, false));
         tree.addListener(SWT.MouseMove, event ->
@@ -185,7 +191,9 @@ public class GitFlowView extends ViewPart
             TreeItem item = tree.getItem(new Point(event.x, event.y));
             if (item == null)
                 tree.setToolTipText(null);
-            else if (item.getBounds(1).contains(event.x, event.y))
+            else if (item.getBounds(1).contains(event.x, event.y) && canDiscard(item))
+                tree.setToolTipText(Messages.get("discardChanges")); //$NON-NLS-1$
+            else if (item.getBounds(2).contains(event.x, event.y))
             {
                 boolean staged = item.getData() instanceof Boolean value ? value
                     : Boolean.TRUE.equals(item.getParentItem().getData());
@@ -202,7 +210,9 @@ public class GitFlowView extends ViewPart
             TreeItem item = tree.getItem(new Point(event.x, event.y));
             if (item == null)
                 return;
-            if (item.getBounds(1).contains(event.x, event.y))
+            if (item.getBounds(1).contains(event.x, event.y) && canDiscard(item))
+                discardFile((FileChange) item.getData());
+            else if (item.getBounds(2).contains(event.x, event.y))
                 activateChange(item, true);
             else if (item.getData() instanceof FileChange)
                 activateChange(item, false);
@@ -216,6 +226,43 @@ public class GitFlowView extends ViewPart
                 activateChange(selected[0], false);
             else if (event.keyCode == ' ')
                 activateChange(selected[0], true);
+            else if (event.keyCode == SWT.DEL && canDiscard(selected[0]))
+                discardFile((FileChange) selected[0].getData());
+        });
+        Menu menu = new Menu(tree);
+        tree.setMenu(menu);
+        tree.addListener(SWT.MenuDetect, event ->
+        {
+            TreeItem item = tree.getItem(tree.toControl(event.x, event.y));
+            if (item == null && tree.getSelectionCount() > 0)
+                item = tree.getSelection()[0];
+            if (item == null || item.getData() instanceof Boolean && item.getItemCount() == 0)
+                event.doit = false;
+            else
+                tree.setSelection(item);
+        });
+        menu.addListener(SWT.Show, event ->
+        {
+            for (MenuItem item : menu.getItems())
+                item.dispose();
+            if (tree.getSelectionCount() == 0)
+                return;
+            TreeItem item = tree.getSelection()[0];
+            Repository repository = selectedRepository();
+            boolean busy = repository == null || isRunning(repository);
+            if (item.getData() instanceof Boolean staged)
+                menuItem(menu, Messages.get(staged ? "unstageAll" : "stageAll"), //$NON-NLS-1$ //$NON-NLS-2$
+                    () -> changeAll(staged)).setEnabled(!busy);
+            else if (item.getData() instanceof FileChange change)
+            {
+                boolean staged = Boolean.TRUE.equals(item.getParentItem().getData());
+                menuItem(menu, Messages.get("openDiffHint"), () -> openDiff(change.path(), staged)); //$NON-NLS-1$
+                menuItem(menu, Messages.get(staged ? "unstageFile" : "stageFile"), //$NON-NLS-1$ //$NON-NLS-2$
+                    () -> changeFile(change.path(), staged)).setEnabled(!busy);
+                if (canDiscard(item))
+                    menuItem(menu, Messages.get("discardChanges"), //$NON-NLS-1$
+                        () -> discardFile(change)).setEnabled(!busy);
+            }
         });
         return tree;
     }
@@ -246,6 +293,19 @@ public class GitFlowView extends ViewPart
             else
                 openDiff(change.path(), staged);
         }
+    }
+
+    private boolean canDiscard(TreeItem item)
+    {
+        return item.getData() instanceof FileChange change
+            && canDiscard(change, Boolean.TRUE.equals(item.getParentItem().getData()));
+    }
+
+    private boolean canDiscard(FileChange change, boolean staged)
+    {
+        return !staged && ("M".equals(change.state()) || "D".equals(change.state())) //$NON-NLS-1$ //$NON-NLS-2$
+            && changes.staged().stream().noneMatch(file -> file.path().equals(change.path())
+                && "A".equals(file.state())); //$NON-NLS-1$
     }
 
     private void showMenu(Button anchor)
@@ -280,11 +340,12 @@ public class GitFlowView extends ViewPart
         menu.setVisible(true);
     }
 
-    private static void menuItem(Menu menu, String title, Runnable action)
+    private static MenuItem menuItem(Menu menu, String title, Runnable action)
     {
         MenuItem item = new MenuItem(menu, SWT.PUSH);
         item.setText(title);
         item.addListener(SWT.Selection, event -> action.run());
+        return item;
     }
 
     private void loadRepositories()
@@ -421,7 +482,7 @@ public class GitFlowView extends ViewPart
                     onUi(() ->
                     {
                         if (instance == GitFlowView.this && current == generation)
-                            feedbackLabel.setText(Messages.get("statusUnavailable") + " " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
+                            showFeedback(Messages.get("statusUnavailable") + " " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
                     });
                 }
                 return Status.OK_STATUS;
@@ -472,7 +533,7 @@ public class GitFlowView extends ViewPart
             changesTree.showItem(moved);
         }
         if (HISTORY.length() == 0)
-            feedbackLabel.setText(changes.staged().isEmpty() && changes.unstaged().isEmpty()
+            showFeedback(changes.staged().isEmpty() && changes.unstaged().isEmpty()
                 ? Messages.get("ready") : ""); //$NON-NLS-1$ //$NON-NLS-2$
         container.layout(true, true);
     }
@@ -484,12 +545,14 @@ public class GitFlowView extends ViewPart
         TreeItem group = new TreeItem(changesTree, SWT.NONE);
         group.setText(new String[] {
             Messages.get(staged ? "stagedChanges" : "unstagedChanges") + " · " + files.size(), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            files.isEmpty() ? "" : staged ? "−" : "+"}); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "", files.isEmpty() ? "" : staged ? "−" : "+"}); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
         group.setData(staged);
         for (FileChange change : files)
         {
             TreeItem item = new TreeItem(group, SWT.NONE);
-            item.setText(new String[] {change.state() + "  " + change.path(), staged ? "−" : "+"}); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            item.setText(new String[] {change.state() + "  " + change.path(),
+                canDiscard(change, staged)
+                    ? "↶" : "", staged ? "−" : "+"}); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
             item.setData(change);
             if (staged == selectedStaged && change.path().equals(selectedPath))
                 moved = item;
@@ -595,6 +658,27 @@ public class GitFlowView extends ViewPart
                 (selected, monitor) -> staged ? WorkingChanges.unstage(selected, path)
                     : WorkingChanges.stage(selected, path), null);
         }
+    }
+
+    private void discardFile(FileChange file)
+    {
+        Repository repository = selectedRepository();
+        if (repository == null || isRunning(repository))
+            return;
+        String question = Messages.get("discardConfirm") + "\n\n" + file.path() + "\n\n" //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            + Messages.get("discardWarning"); //$NON-NLS-1$
+        if (!MessageDialog.openConfirm(getSite().getShell(),
+            Messages.get("discardChanges"), question)) //$NON-NLS-1$
+            return;
+        movedPath = null;
+        changes = new WorkingChanges(changes.staged().stream()
+            .filter(change -> !change.path().equals(file.path())).toList(),
+            changes.unstaged().stream()
+                .filter(change -> !change.path().equals(file.path())).toList());
+        fillChangesTree();
+        updatePrimary();
+        OperationJob.schedule(repository, getSite().getShell(), Messages.get("discardChanges"), //$NON-NLS-1$
+            (selected, monitor) -> WorkingChanges.resetFileToHead(selected, file.path()), null);
     }
 
     private void changeAll(boolean staged)
@@ -800,9 +884,22 @@ public class GitFlowView extends ViewPart
         }
         if (instance != null && instance.feedbackLabel != null && !instance.feedbackLabel.isDisposed())
         {
-            instance.feedbackLabel.setText(message);
-            instance.container.layout(true, true);
+            instance.showFeedback(message);
         }
+    }
+
+    private void showFeedback(String message)
+    {
+        String summary = message;
+        if (message.startsWith(Messages.get("openedLink"))) //$NON-NLS-1$
+            summary = Messages.get("linkOpenedSummary"); //$NON-NLS-1$
+        else if (message.startsWith(Messages.get("copiedLink"))) //$NON-NLS-1$
+            summary = Messages.get("linkCopiedSummary"); //$NON-NLS-1$
+        else if (message.indexOf('\n') >= 0)
+            summary = message.substring(0, message.indexOf('\n')) + "…"; //$NON-NLS-1$
+        feedbackLabel.setText(summary);
+        feedbackLabel.setToolTipText(summary.equals(message) ? null : message);
+        container.layout(true, true);
     }
 
     private static final class RepositorySelection implements ISelectionProvider
