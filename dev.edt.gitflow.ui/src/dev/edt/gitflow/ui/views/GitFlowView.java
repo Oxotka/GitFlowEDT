@@ -13,7 +13,15 @@ import java.util.Map;
 import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.Platform;
 import org.eclipse.core.runtime.Status;
+import org.eclipse.core.resources.IResourceChangeEvent;
+import org.eclipse.core.resources.IResourceChangeListener;
+import org.eclipse.core.resources.ResourcesPlugin;
+import org.eclipse.core.runtime.jobs.Job;
 import org.eclipse.jface.viewers.ISelection;
+import org.eclipse.jface.viewers.ISelectionChangedListener;
+import org.eclipse.jface.viewers.ISelectionProvider;
+import org.eclipse.jface.viewers.SelectionChangedEvent;
+import org.eclipse.jface.viewers.StructuredSelection;
 import org.eclipse.jgit.lib.BranchConfig;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.swt.SWT;
@@ -35,6 +43,7 @@ import org.eclipse.ui.part.ViewPart;
 
 import dev.edt.gitflow.core.PullOperations;
 import dev.edt.gitflow.core.RepositorySupport;
+import dev.edt.gitflow.core.RepositoryOverview;
 import dev.edt.gitflow.ui.handlers.Messages;
 import dev.edt.gitflow.ui.handlers.OperationJob;
 import dev.edt.gitflow.ui.handlers.Repositories;
@@ -50,14 +59,24 @@ public class GitFlowView extends ViewPart
     private static Repository preferredRepository;
 
     private final List<Repository> repositories = new ArrayList<>();
+    private final RepositorySelection selectionProvider = new RepositorySelection();
     private final ISelectionListener selectionListener = this::selectionChanged;
+    private final IResourceChangeListener resourceListener = event -> onUi(() ->
+    {
+        if (instance == this)
+            scheduleOverview();
+    });
     private Composite container;
     private Combo repositoryCombo;
     private Label branchLabel;
+    private Label statusLabel;
     private Button pullButton;
     private Button pushButton;
+    private Button stagingButton;
     private Text output;
     private boolean canSync;
+    private Job overviewJob;
+    private int overviewGeneration;
 
     @Override
     public void createPartControl(Composite parent)
@@ -68,13 +87,16 @@ public class GitFlowView extends ViewPart
         new Label(parent, SWT.NONE).setText(Messages.get("repositoryLabel")); //$NON-NLS-1$
         repositoryCombo = new Combo(parent, SWT.DROP_DOWN | SWT.READ_ONLY);
         repositoryCombo.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
-        repositoryCombo.addListener(SWT.Selection, event -> updateRepository());
+        repositoryCombo.addListener(SWT.Selection, event -> selectRepository(selectedRepository()));
         Button refresh = new Button(parent, SWT.PUSH);
         refresh.setText(Messages.get("refreshRepositories")); //$NON-NLS-1$
         refresh.addListener(SWT.Selection, event -> loadRepositories());
 
         branchLabel = new Label(parent, SWT.WRAP);
         branchLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 3, 1));
+        statusLabel = new Label(parent, SWT.WRAP);
+        statusLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 3, 1));
+        statusLabel.setToolTipText(Messages.get("statusHint")); //$NON-NLS-1$
         pullButton = new Button(parent, SWT.PUSH);
         pullButton.setText(Messages.get("pullJob")); //$NON-NLS-1$
         pullButton.setToolTipText(Messages.get("pullHint")); //$NON-NLS-1$
@@ -83,7 +105,10 @@ public class GitFlowView extends ViewPart
         pushButton.setText(Messages.get("smartPushJob")); //$NON-NLS-1$
         pushButton.setToolTipText(Messages.get("pushHint")); //$NON-NLS-1$
         pushButton.addListener(SWT.Selection, event -> run(true));
-        new Label(parent, SWT.NONE);
+        stagingButton = new Button(parent, SWT.PUSH);
+        stagingButton.setText(Messages.get("openStaging")); //$NON-NLS-1$
+        stagingButton.setToolTipText(Messages.get("stagingHint")); //$NON-NLS-1$
+        stagingButton.addListener(SWT.Selection, event -> openStaging());
 
         output = new Text(parent, SWT.MULTI | SWT.READ_ONLY | SWT.V_SCROLL | SWT.WRAP);
         output.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true, 3, 1));
@@ -96,7 +121,10 @@ public class GitFlowView extends ViewPart
             output.setText(""); //$NON-NLS-1$
         });
         loadRepositories();
+        getSite().setSelectionProvider(selectionProvider);
         getSite().getPage().addSelectionListener(selectionListener);
+        ResourcesPlugin.getWorkspace().addResourceChangeListener(resourceListener,
+            IResourceChangeEvent.POST_CHANGE);
     }
 
     private void loadRepositories()
@@ -142,6 +170,8 @@ public class GitFlowView extends ViewPart
             repositoryCombo.deselectAll();
         else
             repositoryCombo.select(index);
+        selectionProvider.setSelection(index < 0 ? StructuredSelection.EMPTY
+            : new StructuredSelection(repositories.get(index)));
         updateRepository();
     }
 
@@ -196,7 +226,68 @@ public class GitFlowView extends ViewPart
         boolean enabled = repository != null && canSync && !RUNNING.containsKey(repository.getDirectory());
         pullButton.setEnabled(enabled);
         pushButton.setEnabled(enabled);
+        stagingButton.setEnabled(repository != null);
+        scheduleOverview();
         container.layout(true, true);
+    }
+
+    private void scheduleOverview()
+    {
+        if (overviewJob != null)
+            overviewJob.cancel();
+        int generation = ++overviewGeneration;
+        Repository repository = selectedRepository();
+        if (repository == null)
+        {
+            statusLabel.setText(""); //$NON-NLS-1$
+            return;
+        }
+        if (RUNNING.containsKey(repository.getDirectory()))
+            return;
+        statusLabel.setText(Messages.get("statusReading")); //$NON-NLS-1$
+        overviewJob = new Job(Messages.get("statusReading")) //$NON-NLS-1$
+        {
+            @Override
+            protected IStatus run(org.eclipse.core.runtime.IProgressMonitor monitor)
+            {
+                String status;
+                try
+                {
+                    RepositoryOverview overview = RepositoryOverview.read(repository);
+                    status = Messages.get("changedFiles") + " " + overview.changedFiles() + "   " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                        + (overview.incoming() < 0 ? Messages.get("noUpstream") //$NON-NLS-1$
+                            : "↓" + overview.incoming() + "  ↑" + overview.outgoing()); //$NON-NLS-1$ //$NON-NLS-2$
+                }
+                catch (Exception e)
+                {
+                    status = Messages.get("statusUnavailable") + " " + e.getMessage(); //$NON-NLS-1$ //$NON-NLS-2$
+                }
+                String result = status;
+                onUi(() ->
+                {
+                    if (instance == GitFlowView.this && generation == overviewGeneration)
+                    {
+                        statusLabel.setText(result);
+                        container.layout(true, true);
+                    }
+                });
+                return Status.OK_STATUS;
+            }
+        };
+        overviewJob.setSystem(true);
+        overviewJob.schedule(350);
+    }
+
+    private void openStaging()
+    {
+        try
+        {
+            getSite().getPage().showView("org.eclipse.egit.ui.StagingView"); //$NON-NLS-1$
+        }
+        catch (PartInitException e)
+        {
+            publish(Messages.get("stagingUnavailable") + " " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
+        }
     }
 
     private void run(boolean push)
@@ -224,6 +315,9 @@ public class GitFlowView extends ViewPart
     public void dispose()
     {
         getSite().getPage().removeSelectionListener(selectionListener);
+        ResourcesPlugin.getWorkspace().removeResourceChangeListener(resourceListener);
+        if (overviewJob != null)
+            overviewJob.cancel();
         instance = null;
         super.dispose();
     }
@@ -311,6 +405,39 @@ public class GitFlowView extends ViewPart
         {
             instance.output.setText(HISTORY.toString());
             instance.output.setSelection(instance.output.getCharCount());
+        }
+    }
+
+    private static final class RepositorySelection implements ISelectionProvider
+    {
+        private final List<ISelectionChangedListener> listeners = new ArrayList<>();
+        private ISelection selection = StructuredSelection.EMPTY;
+
+        @Override
+        public void addSelectionChangedListener(ISelectionChangedListener listener)
+        {
+            listeners.add(listener);
+        }
+
+        @Override
+        public void removeSelectionChangedListener(ISelectionChangedListener listener)
+        {
+            listeners.remove(listener);
+        }
+
+        @Override
+        public ISelection getSelection()
+        {
+            return selection;
+        }
+
+        @Override
+        public void setSelection(ISelection value)
+        {
+            selection = value;
+            SelectionChangedEvent event = new SelectionChangedEvent(this, value);
+            for (ISelectionChangedListener listener : List.copyOf(listeners))
+                listener.selectionChanged(event);
         }
     }
 }
