@@ -7,9 +7,11 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IResourceChangeEvent;
@@ -39,10 +41,10 @@ import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Label;
 import org.eclipse.swt.widgets.Menu;
 import org.eclipse.swt.widgets.MenuItem;
-import org.eclipse.swt.widgets.Table;
-import org.eclipse.swt.widgets.TableColumn;
-import org.eclipse.swt.widgets.TableItem;
 import org.eclipse.swt.widgets.Text;
+import org.eclipse.swt.widgets.Tree;
+import org.eclipse.swt.widgets.TreeColumn;
+import org.eclipse.swt.widgets.TreeItem;
 import org.eclipse.ui.ISelectionListener;
 import org.eclipse.ui.IWorkbenchPage;
 import org.eclipse.ui.IWorkbenchPart;
@@ -89,12 +91,11 @@ public class GitFlowView extends ViewPart
     private Label countsLabel;
     private Text messageField;
     private Button primaryButton;
-    private Label stagedHeading;
-    private Label changesHeading;
-    private Composite stagedHeader;
-    private Table stagedTable;
-    private Composite changesHeader;
-    private Table changesTable;
+    private Tree changesTree;
+    private boolean stagedExpanded = true;
+    private boolean unstagedExpanded = true;
+    private String movedPath;
+    private boolean movedToStaged;
     private Label feedbackLabel;
     private Job refreshJob;
     private int generation;
@@ -152,14 +153,12 @@ public class GitFlowView extends ViewPart
         primaryButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
         primaryButton.addListener(SWT.Selection, event -> runPrimary());
 
-        stagedHeader = sectionHeader(parent, Messages.get("stagedChanges"), true); //$NON-NLS-1$
-        stagedTable = changeTable(parent, true);
-        changesHeader = sectionHeader(parent, Messages.get("unstagedChanges"), false); //$NON-NLS-1$
-        changesTable = changeTable(parent, false);
+        changesTree = changeTree(parent);
         feedbackLabel = new Label(parent, SWT.WRAP);
         feedbackLabel.setLayoutData(new GridData(SWT.FILL, SWT.TOP, true, false));
         feedbackLabel.setText(Messages.get("ready")); //$NON-NLS-1$
 
+        fillChangesTree();
         loadRepositories();
         getSite().setSelectionProvider(selectionProvider);
         getSite().getPage().addSelectionListener(selectionListener);
@@ -167,63 +166,86 @@ public class GitFlowView extends ViewPart
             IResourceChangeEvent.POST_CHANGE);
     }
 
-    private Composite sectionHeader(Composite parent, String title, boolean staged)
+    private Tree changeTree(Composite parent)
     {
-        Composite row = new Composite(parent, SWT.NONE);
-        row.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
-        GridLayout layout = new GridLayout(2, false);
-        layout.marginWidth = 0;
-        layout.marginHeight = 0;
-        row.setLayout(layout);
-        Label label = new Label(row, SWT.NONE);
-        label.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
-        label.setText(title);
-        if (staged)
-            stagedHeading = label;
-        else
-            changesHeading = label;
-        Button all = new Button(row, SWT.PUSH);
-        all.setText(staged ? "−" : "+"); //$NON-NLS-1$ //$NON-NLS-2$
-        all.setToolTipText(Messages.get(staged ? "unstageAll" : "stageAll")); //$NON-NLS-1$ //$NON-NLS-2$
-        all.addListener(SWT.Selection, event -> changeAll(staged));
-        return row;
-    }
-
-    private Table changeTable(Composite parent, boolean staged)
-    {
-        Table table = new Table(parent, SWT.SINGLE | SWT.FULL_SELECTION | SWT.BORDER);
-        GridData data = new GridData(SWT.FILL, SWT.TOP, true, false);
-        data.heightHint = 100;
-        table.setLayoutData(data);
-        TableColumn file = new TableColumn(table, SWT.LEFT);
+        Tree tree = new Tree(parent, SWT.SINGLE | SWT.FULL_SELECTION | SWT.BORDER | SWT.V_SCROLL);
+        GridData data = new GridData(SWT.FILL, SWT.FILL, true, true);
+        data.heightHint = 140;
+        tree.setLayoutData(data);
+        TreeColumn file = new TreeColumn(tree, SWT.LEFT);
         file.setWidth(260);
-        TableColumn action = new TableColumn(table, SWT.CENTER);
+        TreeColumn action = new TreeColumn(tree, SWT.CENTER);
         action.setWidth(32);
-        table.addListener(SWT.Resize, event ->
-            file.setWidth(Math.max(100, table.getClientArea().width - action.getWidth() - 3)));
-        table.addListener(SWT.MouseDown, event ->
+        tree.addListener(SWT.Resize, event ->
+            file.setWidth(Math.max(100, tree.getClientArea().width - action.getWidth() - 3)));
+        tree.addListener(SWT.Expand, event -> rememberExpansion((TreeItem) event.item, true));
+        tree.addListener(SWT.Collapse, event -> rememberExpansion((TreeItem) event.item, false));
+        tree.addListener(SWT.MouseMove, event ->
         {
-            TableItem item = table.getItem(new Point(event.x, event.y));
+            TreeItem item = tree.getItem(new Point(event.x, event.y));
+            if (item == null)
+                tree.setToolTipText(null);
+            else if (item.getBounds(1).contains(event.x, event.y))
+            {
+                boolean staged = item.getData() instanceof Boolean value ? value
+                    : Boolean.TRUE.equals(item.getParentItem().getData());
+                tree.setToolTipText(Messages.get(item.getData() instanceof Boolean
+                    ? staged ? "unstageAll" : "stageAll" //$NON-NLS-1$ //$NON-NLS-2$
+                    : staged ? "unstageFile" : "stageFile")); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            else
+                tree.setToolTipText(item.getData() instanceof FileChange
+                    ? Messages.get("openDiffHint") : null); //$NON-NLS-1$
+        });
+        tree.addListener(SWT.MouseDown, event ->
+        {
+            TreeItem item = tree.getItem(new Point(event.x, event.y));
             if (item == null)
                 return;
-            FileChange change = (FileChange) item.getData();
             if (item.getBounds(1).contains(event.x, event.y))
+                activateChange(item, true);
+            else if (item.getData() instanceof FileChange)
+                activateChange(item, false);
+        });
+        tree.addListener(SWT.KeyDown, event ->
+        {
+            TreeItem[] selected = tree.getSelection();
+            if (selected.length == 0)
+                return;
+            if (event.keyCode == SWT.CR)
+                activateChange(selected[0], false);
+            else if (event.keyCode == ' ')
+                activateChange(selected[0], true);
+        });
+        return tree;
+    }
+
+    private void rememberExpansion(TreeItem item, boolean expanded)
+    {
+        if (item.getData() instanceof Boolean staged)
+        {
+            if (staged)
+                stagedExpanded = expanded;
+            else
+                unstagedExpanded = expanded;
+        }
+    }
+
+    private void activateChange(TreeItem item, boolean action)
+    {
+        if (item.getData() instanceof Boolean staged)
+        {
+            if (action && item.getItemCount() > 0)
+                changeAll(staged);
+        }
+        else if (item.getData() instanceof FileChange change)
+        {
+            boolean staged = Boolean.TRUE.equals(item.getParentItem().getData());
+            if (action)
                 changeFile(change.path(), staged);
             else
                 openDiff(change.path(), staged);
-        });
-        table.addListener(SWT.KeyDown, event ->
-        {
-            TableItem[] selected = table.getSelection();
-            if (selected.length == 0)
-                return;
-            FileChange change = (FileChange) selected[0].getData();
-            if (event.keyCode == SWT.CR)
-                openDiff(change.path(), staged);
-            else if (event.keyCode == ' ')
-                changeFile(change.path(), staged);
-        });
-        return table;
+        }
     }
 
     private void showMenu(Button anchor)
@@ -336,7 +358,8 @@ public class GitFlowView extends ViewPart
             displayedDirectory = directory;
             overview = new RepositoryOverview(0, -1, -1);
             changes = new WorkingChanges(List.of(), List.of());
-            fillTables();
+            movedPath = null;
+            fillChangesTree();
         }
         if (repository == null)
         {
@@ -388,7 +411,7 @@ public class GitFlowView extends ViewPart
                         {
                             changes = latestChanges;
                             overview = latestOverview;
-                            fillTables();
+                            fillChangesTree();
                             updatePrimary();
                         }
                     });
@@ -408,39 +431,71 @@ public class GitFlowView extends ViewPart
         refreshJob.schedule(300);
     }
 
-    private void fillTables()
+    private void fillChangesTree()
     {
-        fillTable(stagedTable, changes.staged(), true);
-        fillTable(changesTable, changes.unstaged(), false);
-        stagedHeading.setText(Messages.get("stagedChanges") + " · " + changes.staged().size()); //$NON-NLS-1$ //$NON-NLS-2$
-        changesHeading.setText(Messages.get("unstagedChanges") + " · " + changes.unstaged().size()); //$NON-NLS-1$ //$NON-NLS-2$
-        visible(stagedHeader, !changes.staged().isEmpty());
-        visible(stagedTable, !changes.staged().isEmpty());
-        visible(changesHeader, !changes.unstaged().isEmpty());
-        visible(changesTable, !changes.unstaged().isEmpty());
+        String selectedPath = movedPath;
+        boolean selectedStaged = movedToStaged;
+        if (selectedPath == null && changesTree.getSelectionCount() > 0)
+        {
+            TreeItem selected = changesTree.getSelection()[0];
+            if (selected.getData() instanceof FileChange file)
+            {
+                selectedPath = file.path();
+                selectedStaged = Boolean.TRUE.equals(selected.getParentItem().getData());
+            }
+        }
+        TreeItem moved = null;
+        changesTree.setRedraw(false);
+        try
+        {
+            changesTree.removeAll();
+            TreeItem staged = fillGroup(changes.staged(), true, stagedExpanded,
+                selectedPath, selectedStaged);
+            TreeItem unstaged = fillGroup(changes.unstaged(), false, unstagedExpanded,
+                selectedPath, selectedStaged);
+            moved = selectedStaged ? staged : unstaged;
+            if (moved == null && selectedPath != null)
+                for (TreeItem group : changesTree.getItems())
+                    for (TreeItem item : group.getItems())
+                        if (item.getData() instanceof FileChange file
+                            && file.path().equals(selectedPath))
+                            moved = item;
+            movedPath = null;
+        }
+        finally
+        {
+            changesTree.setRedraw(true);
+        }
+        if (moved != null)
+        {
+            changesTree.setSelection(moved);
+            changesTree.showItem(moved);
+        }
         if (HISTORY.length() == 0)
             feedbackLabel.setText(changes.staged().isEmpty() && changes.unstaged().isEmpty()
                 ? Messages.get("ready") : ""); //$NON-NLS-1$ //$NON-NLS-2$
         container.layout(true, true);
     }
 
-    private static void fillTable(Table table, List<FileChange> files, boolean staged)
+    private TreeItem fillGroup(List<FileChange> files, boolean staged, boolean expanded,
+        String selectedPath, boolean selectedStaged)
     {
-        table.removeAll();
+        TreeItem moved = null;
+        TreeItem group = new TreeItem(changesTree, SWT.NONE);
+        group.setText(new String[] {
+            Messages.get(staged ? "stagedChanges" : "unstagedChanges") + " · " + files.size(), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            files.isEmpty() ? "" : staged ? "−" : "+"}); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        group.setData(staged);
         for (FileChange change : files)
         {
-            TableItem item = new TableItem(table, SWT.NONE);
+            TreeItem item = new TreeItem(group, SWT.NONE);
             item.setText(new String[] {change.state() + "  " + change.path(), staged ? "−" : "+"}); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             item.setData(change);
+            if (staged == selectedStaged && change.path().equals(selectedPath))
+                moved = item;
         }
-        ((GridData) table.getLayoutData()).heightHint = Math.min(7, Math.max(1, files.size()))
-            * table.getItemHeight() + 5;
-    }
-
-    private static void visible(org.eclipse.swt.widgets.Control control, boolean show)
-    {
-        control.setVisible(show);
-        ((GridData) control.getLayoutData()).exclude = !show;
+        group.setExpanded(expanded);
+        return moved;
     }
 
     private void updatePrimary()
@@ -522,19 +577,40 @@ public class GitFlowView extends ViewPart
     private void changeFile(String path, boolean staged)
     {
         Repository repository = selectedRepository();
-        if (repository != null)
+        if (repository != null && !isRunning(repository))
+        {
+            FileChange file = (staged ? changes.staged() : changes.unstaged()).stream()
+                .filter(change -> change.path().equals(path)).findFirst().orElse(null);
+            if (file == null)
+                return;
+            movedPath = path;
+            movedToStaged = !staged;
+            if (staged)
+                unstagedExpanded = true;
+            else
+                stagedExpanded = true;
+            optimisticMove(List.of(file), staged);
             OperationJob.schedule(repository, getSite().getShell(),
                 Messages.get(staged ? "unstageFile" : "stageFile"), //$NON-NLS-1$ //$NON-NLS-2$
                 (selected, monitor) -> staged ? WorkingChanges.unstage(selected, path)
                     : WorkingChanges.stage(selected, path), null);
+        }
     }
 
     private void changeAll(boolean staged)
     {
         Repository repository = selectedRepository();
-        if (repository == null)
+        if (repository == null || isRunning(repository))
             return;
         List<FileChange> files = List.copyOf(staged ? changes.staged() : changes.unstaged());
+        if (files.isEmpty())
+            return;
+        movedPath = null;
+        if (staged)
+            unstagedExpanded = true;
+        else
+            stagedExpanded = true;
+        optimisticMove(files, staged);
         OperationJob.schedule(repository, getSite().getShell(),
             Messages.get(staged ? "unstageAll" : "stageAll"), //$NON-NLS-1$ //$NON-NLS-2$
             (selected, monitor) ->
@@ -550,6 +626,32 @@ public class GitFlowView extends ViewPart
                     dev.edt.gitflow.core.OperationResult.Kind.SUCCESS,
                     (staged ? "Убрано из коммита: " : "Подготовлено: ") + files.size()); //$NON-NLS-1$ //$NON-NLS-2$
             }, null);
+    }
+
+    private void optimisticMove(List<FileChange> files, boolean staged)
+    {
+        List<FileChange> stagedFiles = new ArrayList<>(changes.staged());
+        List<FileChange> unstagedFiles = new ArrayList<>(changes.unstaged());
+        List<FileChange> source = staged ? stagedFiles : unstagedFiles;
+        List<FileChange> target = staged ? unstagedFiles : stagedFiles;
+        Set<String> paths = new HashSet<>();
+        Set<String> targetPaths = new HashSet<>();
+        for (FileChange file : files)
+            paths.add(file.path());
+        for (FileChange file : target)
+            targetPaths.add(file.path());
+        source.removeIf(change -> paths.contains(change.path()));
+        for (FileChange file : files)
+        {
+            if (targetPaths.add(file.path()))
+                target.add(new FileChange(file.path(), staged && "A".equals(file.state()) ? "U" //$NON-NLS-1$ //$NON-NLS-2$
+                    : !staged && "U".equals(file.state()) ? "A" : file.state())); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        stagedFiles.sort(Comparator.comparing(FileChange::path));
+        unstagedFiles.sort(Comparator.comparing(FileChange::path));
+        changes = new WorkingChanges(List.copyOf(stagedFiles), List.copyOf(unstagedFiles));
+        fillChangesTree();
+        updatePrimary();
     }
 
     private void openDiff(String path, boolean staged)
@@ -634,7 +736,12 @@ public class GitFlowView extends ViewPart
         {
             RUNNING.merge(repository.getDirectory(), 1, Integer::sum);
             if (instance != null)
+            {
+                ++instance.generation;
+                if (instance.refreshJob != null)
+                    instance.refreshJob.cancel();
                 instance.updatePrimary();
+            }
         });
     }
 

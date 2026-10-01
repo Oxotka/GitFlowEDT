@@ -110,9 +110,9 @@ public final class OperationJob
                     GitFlowView.publish(title + ": " + changeEvent.getResult().getMessage()); //$NON-NLS-1$
             }
         });
+        GitFlowView.started(repository);
         GitFlowView.useRepository(repository);
         GitFlowView.publish(title + Messages.get("operationStarted")); //$NON-NLS-1$
-        GitFlowView.started(repository);
         job.schedule();
     }
 
