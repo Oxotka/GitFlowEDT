@@ -1,5 +1,6 @@
 package dev.edt.gitflow.ui.handlers;
 
+import java.util.Comparator;
 import java.util.Set;
 
 import org.eclipse.core.resources.IResource;
@@ -9,17 +10,16 @@ import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.IAdaptable;
 import org.eclipse.jface.viewers.IStructuredSelection;
-import org.eclipse.jface.viewers.LabelProvider;
 import org.eclipse.jface.viewers.ISelection;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.ui.IEditorInput;
 import org.eclipse.ui.IEditorPart;
 import org.eclipse.ui.IWorkbenchPage;
-import org.eclipse.ui.dialogs.ElementListSelectionDialog;
 import org.eclipse.ui.handlers.HandlerUtil;
 import org.eclipse.core.commands.ExecutionEvent;
 
 import dev.edt.gitflow.core.RepositorySupport;
+import dev.edt.gitflow.ui.views.GitFlowView;
 
 public final class Repositories
 {
@@ -36,25 +36,13 @@ public final class Repositories
             return selected;
 
         Set<Repository> repositories = RepositorySupport.allRepositories();
-        if (repositories.size() == 1)
-            return repositories.iterator().next();
-        if (repositories.isEmpty())
-            return null;
-
-        ElementListSelectionDialog dialog = new ElementListSelectionDialog(
-            HandlerUtil.getActiveShell(event), new LabelProvider()
-            {
-                @Override
-                public String getText(Object element)
-                {
-                    Repository repository = (Repository) element;
-                    return repository.getWorkTree().getAbsolutePath();
-                }
-            });
-        dialog.setTitle(Messages.get("title")); //$NON-NLS-1$
-        dialog.setMessage(Messages.get("selectRepository")); //$NON-NLS-1$
-        dialog.setElements(repositories.toArray());
-        return dialog.open() == org.eclipse.jface.window.Window.OK ? (Repository) dialog.getFirstResult() : null;
+        Repository preferred = GitFlowView.repositoryForCommands();
+        if (preferred != null && repositories.stream().anyMatch(
+            repository -> repository.getDirectory().equals(preferred.getDirectory())))
+            return preferred;
+        return repositories.stream()
+            .min(Comparator.comparing(repo -> repo.getWorkTree().getAbsolutePath()))
+            .orElse(null);
     }
 
     static IResource selectedResource(ExecutionEvent event)

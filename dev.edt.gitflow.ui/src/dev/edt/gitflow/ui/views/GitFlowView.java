@@ -116,7 +116,7 @@ public class GitFlowView extends ViewPart
             candidate = null;
         if (candidate == null)
             candidate = Repositories.context(getSite().getPage());
-        if (candidate == null && repositories.size() == 1)
+        if (candidate == null && !repositories.isEmpty())
             candidate = repositories.get(0);
         selectRepository(candidate);
     }
@@ -214,7 +214,10 @@ public class GitFlowView extends ViewPart
     public void setFocus()
     {
         if (repositoryCombo != null && !repositoryCombo.isDisposed())
+        {
+            loadRepositories();
             repositoryCombo.setFocus();
+        }
     }
 
     @Override
@@ -233,6 +236,11 @@ public class GitFlowView extends ViewPart
             if (instance != null)
                 instance.selectRepository(repository);
         });
+    }
+
+    public static Repository repositoryForCommands()
+    {
+        return instance == null ? preferredRepository : instance.selectedRepository();
     }
 
     public static void started(Repository repository)
