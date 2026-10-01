@@ -29,9 +29,12 @@ import org.eclipse.jface.viewers.ISelectionProvider;
 import org.eclipse.jface.viewers.SelectionChangedEvent;
 import org.eclipse.jface.viewers.StructuredSelection;
 import org.eclipse.jgit.lib.BranchConfig;
+import org.eclipse.jgit.lib.Constants;
+import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.custom.CLabel;
+import org.eclipse.swt.custom.SashForm;
 import org.eclipse.swt.graphics.Point;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
@@ -59,6 +62,7 @@ import org.osgi.service.prefs.BackingStoreException;
 
 import dev.edt.gitflow.core.CommitOperations;
 import dev.edt.gitflow.core.PullOperations;
+import dev.edt.gitflow.core.RecentHistory;
 import dev.edt.gitflow.core.RepositoryOverview;
 import dev.edt.gitflow.core.RepositorySupport;
 import dev.edt.gitflow.core.WorkingChanges;
@@ -93,6 +97,8 @@ public class GitFlowView extends ViewPart
     private Text messageField;
     private Button primaryButton;
     private Tree changesTree;
+    private RecentHistoryPane historyPane;
+    private ObjectId historyHead;
     private boolean stagedExpanded = true;
     private boolean unstagedExpanded = true;
     private String movedPath;
@@ -154,7 +160,12 @@ public class GitFlowView extends ViewPart
         primaryButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
         primaryButton.addListener(SWT.Selection, event -> runPrimary());
 
-        changesTree = changeTree(parent);
+        SashForm content = new SashForm(parent, SWT.VERTICAL);
+        content.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
+        content.setSashWidth(4);
+        changesTree = changeTree(content);
+        historyPane = new RecentHistoryPane(content);
+        content.setWeights(70, 30);
         feedbackLabel = new CLabel(parent, SWT.NONE);
         GridData feedbackData = new GridData(SWT.FILL, SWT.CENTER, true, false);
         feedbackData.widthHint = 0;
@@ -419,6 +430,8 @@ public class GitFlowView extends ViewPart
             displayedDirectory = directory;
             overview = new RepositoryOverview(0, -1, -1);
             changes = new WorkingChanges(List.of(), List.of());
+            historyHead = null;
+            historyPane.setCommits(List.of());
             movedPath = null;
             fillChangesTree();
         }
@@ -457,6 +470,7 @@ public class GitFlowView extends ViewPart
         Repository repository = selectedRepository();
         if (repository == null || RUNNING.containsKey(repository.getDirectory()))
             return;
+        ObjectId displayedHead = historyHead;
         refreshJob = new Job(Messages.get("statusReading")) //$NON-NLS-1$
         {
             @Override
@@ -466,12 +480,20 @@ public class GitFlowView extends ViewPart
                 {
                     WorkingChanges latestChanges = WorkingChanges.read(repository);
                     RepositoryOverview latestOverview = RepositoryOverview.read(repository);
+                    ObjectId latestHead = repository.resolve(Constants.HEAD);
+                    List<RecentHistory.Entry> latestHistory = Objects.equals(latestHead, displayedHead)
+                        ? null : RecentHistory.read(repository, 30);
                     onUi(() ->
                     {
                         if (instance == GitFlowView.this && current == generation)
                         {
                             changes = latestChanges;
                             overview = latestOverview;
+                            if (latestHistory != null)
+                            {
+                                historyHead = latestHead;
+                                historyPane.setCommits(latestHistory);
+                            }
                             fillChangesTree();
                             updatePrimary();
                         }
