@@ -24,6 +24,8 @@ import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Text;
 import org.eclipse.swt.widgets.Tree;
 import org.eclipse.swt.widgets.TreeItem;
+import org.eclipse.ui.ISharedImages;
+import org.eclipse.ui.PlatformUI;
 import org.osgi.service.prefs.BackingStoreException;
 import org.osgi.service.prefs.Preferences;
 
@@ -233,6 +235,7 @@ final class BranchPicker
     {
         TreeItem item = new TreeItem(tree, SWT.NONE);
         item.setText(label);
+        item.setImage(PlatformUI.getWorkbench().getSharedImages().getImage(ISharedImages.IMG_OBJ_FOLDER));
         return item;
     }
 
@@ -261,6 +264,9 @@ final class BranchPicker
             {
                 item = new TreeItem(parent, SWT.NONE);
                 item.setText(parts[i]);
+                if (i < parts.length - 1)
+                    item.setImage(PlatformUI.getWorkbench().getSharedImages()
+                        .getImage(ISharedImages.IMG_OBJ_FOLDER));
             }
             if (i == parts.length - 1)
             {

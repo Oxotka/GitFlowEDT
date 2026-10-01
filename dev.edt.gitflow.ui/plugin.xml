@@ -86,6 +86,11 @@
                <test property="GitSelection.projectsSingleRepository"/>
             </visibleWhen>
          </command>
+         <command commandId="dev.edt.gitflow.ui.command.smartCheckout">
+            <visibleWhen checkEnabled="false">
+               <test property="GitSelection.projectsSingleRepository"/>
+            </visibleWhen>
+         </command>
       </menuContribution>
       <menuContribution
             locationURI="menu:org.eclipse.ui.main.menu?after=project">
