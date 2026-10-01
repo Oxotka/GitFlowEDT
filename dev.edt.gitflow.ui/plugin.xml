@@ -67,6 +67,20 @@
    </extension>
    <extension
          point="org.eclipse.ui.menus">
+      <menuContribution locationURI="popup:team.main?after=org.eclipse.egit.ui.pullPushSeparator">
+         <command commandId="dev.edt.gitflow.ui.command.smartPull"
+               label="%command.smartPull.teamLabel">
+            <visibleWhen checkEnabled="false">
+               <test property="GitSelection.projectsSingleRepository"/>
+            </visibleWhen>
+         </command>
+         <command commandId="dev.edt.gitflow.ui.command.smartPush"
+               label="%command.smartPush.teamLabel">
+            <visibleWhen checkEnabled="false">
+               <test property="GitSelection.projectsSingleRepository"/>
+            </visibleWhen>
+         </command>
+      </menuContribution>
       <menuContribution
             locationURI="menu:org.eclipse.ui.main.menu?after=project">
          <menu

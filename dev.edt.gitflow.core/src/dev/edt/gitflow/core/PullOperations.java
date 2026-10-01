@@ -25,8 +25,24 @@ public final class PullOperations
 
     public static OperationResult smartPull(Repository repository, IProgressMonitor monitor)
     {
+        return smartPull(repository, false, monitor);
+    }
+
+    public static OperationResult smartPull(Repository repository, boolean confirmTrack,
+        IProgressMonitor monitor)
+    {
         if (!RepositorySupport.isSafe(repository))
             return new OperationResult(Kind.ERROR, "Репозиторий занят другой Git-операцией."); //$NON-NLS-1$
+        try
+        {
+            BranchConfig branch = new BranchConfig(repository.getConfig(), repository.getBranch());
+            if (branch.getRemote() == null || branch.getRemoteTrackingBranch() == null)
+                return trackAndPull(repository, confirmTrack, monitor);
+        }
+        catch (IOException e)
+        {
+            return new OperationResult(Kind.ERROR, e.getMessage());
+        }
         String stashId = null;
         monitor.beginTask("Умное получение", 4); //$NON-NLS-1$
         try
@@ -97,8 +113,49 @@ public final class PullOperations
         }
     }
 
+    private static OperationResult trackAndPull(Repository repository, boolean confirmed,
+        IProgressMonitor monitor)
+    {
+        if (repository.getConfig().getString("remote", "origin", "url") == null) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            return new OperationResult(Kind.ERROR, "Для получения настройте remote origin."); //$NON-NLS-1$
+        try
+        {
+            String name = repository.getBranch();
+            if (!confirmed)
+                return new OperationResult(Kind.NEEDS_CONFIRMATION,
+                    "У ветки " + name + " нет upstream. Найти её в origin и настроить получение?"); //$NON-NLS-1$ //$NON-NLS-2$
+            Git.wrap(repository).fetch().setRemote("origin").call(); //$NON-NLS-1$
+            if (repository.resolve("refs/remotes/origin/" + name) == null) //$NON-NLS-1$
+                return new OperationResult(Kind.ERROR,
+                    "В origin нет ветки " + name + ". Для первой отправки используйте умную отправку."); //$NON-NLS-1$ //$NON-NLS-2$
+            configureUpstream(repository, name);
+            return smartPull(repository, false, monitor);
+        }
+        catch (GitAPIException | IOException e)
+        {
+            return new OperationResult(Kind.ERROR, "Настроить получение не удалось: " + e.getMessage()); //$NON-NLS-1$
+        }
+    }
+
     public static OperationResult smartPush(Repository repository, IProgressMonitor monitor)
     {
+        return smartPush(repository, false, monitor);
+    }
+
+    public static OperationResult smartPush(Repository repository, boolean confirmPublish,
+        IProgressMonitor monitor)
+    {
+        try
+        {
+            String name = repository.getBranch();
+            BranchConfig branch = new BranchConfig(repository.getConfig(), name);
+            if (branch.getRemote() == null || branch.getMerge() == null)
+                return publishBranch(repository, name, confirmPublish, monitor);
+        }
+        catch (IOException e)
+        {
+            return new OperationResult(Kind.ERROR, e.getMessage());
+        }
         OperationResult pulled = smartPull(repository, monitor);
         if (!pulled.succeeded())
             return pulled;
@@ -111,20 +168,10 @@ public final class PullOperations
             String merge = branch.getMerge();
             if (remote == null || merge == null)
                 return new OperationResult(Kind.ERROR, "Для отправки не настроен upstream."); //$NON-NLS-1$
-            RefSpec spec = new RefSpec("refs/heads/" + name + ":" + merge); //$NON-NLS-1$ //$NON-NLS-2$
-            int updated = 0;
-            for (PushResult push : git.push().setRemote(remote).setRefSpecs(spec).call())
-            {
-                for (RemoteRefUpdate ref : push.getRemoteUpdates())
-                {
-                    if (ref.getStatus() == RemoteRefUpdate.Status.OK)
-                        updated++;
-                    else if (ref.getStatus() != RemoteRefUpdate.Status.UP_TO_DATE)
-                        return new OperationResult(Kind.ERROR,
-                            "Получение прошло, но push отклонён: " + ref.getStatus() //$NON-NLS-1$
-                                + ". Повторите синхронизацию."); //$NON-NLS-1$
-                }
-            }
+            int updated = push(git, remote, name, merge);
+            if (updated < 0)
+                return new OperationResult(Kind.ERROR,
+                    "Получение прошло, но push отклонён. Повторите умную отправку."); //$NON-NLS-1$
             return updated == 0
                 ? new OperationResult(Kind.NO_CHANGE, "Ветка уже синхронизирована.") //$NON-NLS-1$
                 : new OperationResult(Kind.SUCCESS, pulled.message() + " Отправлена ветка " + name); //$NON-NLS-1$
@@ -133,6 +180,69 @@ public final class PullOperations
         {
             return new OperationResult(Kind.ERROR, "Получение прошло, но отправка не удалась: " + e.getMessage()); //$NON-NLS-1$
         }
+    }
+
+    private static OperationResult publishBranch(Repository repository, String name,
+        boolean confirmed, IProgressMonitor monitor)
+    {
+        if (!RepositorySupport.isSafe(repository))
+            return new OperationResult(Kind.ERROR, "Репозиторий занят другой Git-операцией."); //$NON-NLS-1$
+        if (repository.getConfig().getString("remote", "origin", "url") == null) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            return new OperationResult(Kind.ERROR, "Для публикации ветки настройте remote origin."); //$NON-NLS-1$
+        if (!confirmed)
+            return new OperationResult(Kind.NEEDS_CONFIRMATION,
+                "У ветки " + name + " нет upstream. Найти её в origin или опубликовать и настроить upstream?"); //$NON-NLS-1$ //$NON-NLS-2$
+        try
+        {
+            Git git = Git.wrap(repository);
+            git.fetch().setRemote("origin").call(); //$NON-NLS-1$
+            if (repository.resolve("refs/remotes/origin/" + name) != null) //$NON-NLS-1$
+            {
+                configureUpstream(repository, name);
+                return smartPush(repository, true, monitor);
+            }
+            int updated = push(git, "origin", name, "refs/heads/" + name); //$NON-NLS-1$ //$NON-NLS-2$
+            if (updated < 0)
+                return new OperationResult(Kind.ERROR,
+                    "Ветка появилась на сервере во время отправки. Повторите умную отправку."); //$NON-NLS-1$
+            configureUpstream(repository, name);
+            return new OperationResult(Kind.SUCCESS,
+                "Ветка " + name + " опубликована в origin; upstream настроен."); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        catch (GitAPIException e)
+        {
+            return new OperationResult(Kind.ERROR, "Опубликовать ветку не удалось: " + e.getMessage()); //$NON-NLS-1$
+        }
+        catch (IOException e)
+        {
+            return new OperationResult(Kind.ERROR,
+                "Ветку отправили или нашли в origin, но upstream не удалось сохранить: " + e.getMessage()); //$NON-NLS-1$
+        }
+    }
+
+    private static void configureUpstream(Repository repository, String name) throws IOException
+    {
+        repository.getConfig().setString("branch", name, "remote", "origin"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        repository.getConfig().setString("branch", name, "merge", "refs/heads/" + name); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        repository.getConfig().save();
+    }
+
+    private static int push(Git git, String remote, String name, String destination)
+        throws GitAPIException
+    {
+        RefSpec spec = new RefSpec("refs/heads/" + name + ":" + destination); //$NON-NLS-1$ //$NON-NLS-2$
+        int updated = 0;
+        for (PushResult result : git.push().setRemote(remote).setRefSpecs(spec).call())
+        {
+            for (RemoteRefUpdate ref : result.getRemoteUpdates())
+            {
+                if (ref.getStatus() == RemoteRefUpdate.Status.OK)
+                    updated++;
+                else if (ref.getStatus() != RemoteRefUpdate.Status.UP_TO_DATE)
+                    return -1;
+            }
+        }
+        return updated;
     }
 
     private static int countRange(Git git, ObjectId oldId, ObjectId newId) throws GitAPIException, IOException

@@ -21,7 +21,7 @@ import dev.edt.gitflow.core.OperationResult;
 import dev.edt.gitflow.core.RepositorySupport;
 import dev.edt.gitflow.ui.views.GitFlowView;
 
-final class OperationJob
+public final class OperationJob
 {
     private static final String PLUGIN_ID = "dev.edt.gitflow.ui"; //$NON-NLS-1$
 
@@ -48,10 +48,15 @@ final class OperationJob
         schedule(repository, HandlerUtil.getActiveShell(event), title, operation, confirmedOperation);
     }
 
-    static void schedule(Repository repository, Shell shell, String title,
+    public static void schedule(Repository repository, Shell shell, String title,
         BiFunction<Repository, IProgressMonitor, OperationResult> operation,
         BiFunction<Repository, IProgressMonitor, OperationResult> confirmedOperation)
     {
+        if (GitFlowView.isRunning(repository))
+        {
+            GitFlowView.publish(Messages.get("operationAlreadyRunning")); //$NON-NLS-1$
+            return;
+        }
         OperationResult[] completion = new OperationResult[1];
         Job job = new Job(title)
         {
@@ -85,6 +90,7 @@ final class OperationJob
             @Override
             public void done(IJobChangeEvent changeEvent)
             {
+                GitFlowView.finished(repository);
                 if (completion[0] != null)
                     Display.getDefault().asyncExec(() ->
                     {
@@ -100,9 +106,13 @@ final class OperationJob
                         else
                             GitFlowView.publish(title + ": " + completion[0].message()); //$NON-NLS-1$
                     });
+                else if (!changeEvent.getResult().isOK())
+                    GitFlowView.publish(title + ": " + changeEvent.getResult().getMessage()); //$NON-NLS-1$
             }
         });
+        GitFlowView.useRepository(repository);
         GitFlowView.publish(title + Messages.get("operationStarted")); //$NON-NLS-1$
+        GitFlowView.started(repository);
         job.schedule();
     }
 

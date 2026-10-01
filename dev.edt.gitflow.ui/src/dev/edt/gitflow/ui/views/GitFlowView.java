@@ -1,26 +1,43 @@
 package dev.edt.gitflow.ui.views;
 
+import java.io.File;
+import java.io.IOException;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 import org.eclipse.core.runtime.IStatus;
-import org.eclipse.core.runtime.Status;
 import org.eclipse.core.runtime.Platform;
+import org.eclipse.core.runtime.Status;
+import org.eclipse.jface.viewers.ISelection;
+import org.eclipse.jgit.lib.BranchConfig;
+import org.eclipse.jgit.lib.Repository;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Button;
+import org.eclipse.swt.widgets.Combo;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Label;
 import org.eclipse.swt.widgets.Text;
+import org.eclipse.ui.ISelectionListener;
 import org.eclipse.ui.IWorkbenchPage;
+import org.eclipse.ui.IWorkbenchPart;
 import org.eclipse.ui.IWorkbenchWindow;
 import org.eclipse.ui.PartInitException;
 import org.eclipse.ui.PlatformUI;
 import org.eclipse.ui.part.ViewPart;
 
+import dev.edt.gitflow.core.PullOperations;
+import dev.edt.gitflow.core.RepositorySupport;
 import dev.edt.gitflow.ui.handlers.Messages;
+import dev.edt.gitflow.ui.handlers.OperationJob;
+import dev.edt.gitflow.ui.handlers.Repositories;
 
 public class GitFlowView extends ViewPart
 {
@@ -28,18 +45,48 @@ public class GitFlowView extends ViewPart
     private static final String PLUGIN_ID = "dev.edt.gitflow.ui"; //$NON-NLS-1$
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss"); //$NON-NLS-1$
     private static final StringBuilder HISTORY = new StringBuilder();
+    private static final Map<File, Integer> RUNNING = new HashMap<>();
     private static GitFlowView instance;
+    private static Repository preferredRepository;
 
+    private final List<Repository> repositories = new ArrayList<>();
+    private final ISelectionListener selectionListener = this::selectionChanged;
+    private Composite container;
+    private Combo repositoryCombo;
+    private Label branchLabel;
+    private Button pullButton;
+    private Button pushButton;
     private Text output;
+    private boolean canSync;
 
     @Override
     public void createPartControl(Composite parent)
     {
         instance = this;
-        parent.setLayout(new GridLayout(1, false));
-        new Label(parent, SWT.NONE).setText(Messages.get("viewIntro")); //$NON-NLS-1$
+        container = parent;
+        parent.setLayout(new GridLayout(3, false));
+        new Label(parent, SWT.NONE).setText(Messages.get("repositoryLabel")); //$NON-NLS-1$
+        repositoryCombo = new Combo(parent, SWT.DROP_DOWN | SWT.READ_ONLY);
+        repositoryCombo.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        repositoryCombo.addListener(SWT.Selection, event -> updateRepository());
+        Button refresh = new Button(parent, SWT.PUSH);
+        refresh.setText(Messages.get("refreshRepositories")); //$NON-NLS-1$
+        refresh.addListener(SWT.Selection, event -> loadRepositories());
+
+        branchLabel = new Label(parent, SWT.WRAP);
+        branchLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 3, 1));
+        pullButton = new Button(parent, SWT.PUSH);
+        pullButton.setText(Messages.get("pullJob")); //$NON-NLS-1$
+        pullButton.setToolTipText(Messages.get("pullHint")); //$NON-NLS-1$
+        pullButton.addListener(SWT.Selection, event -> run(false));
+        pushButton = new Button(parent, SWT.PUSH);
+        pushButton.setText(Messages.get("smartPushJob")); //$NON-NLS-1$
+        pushButton.setToolTipText(Messages.get("pushHint")); //$NON-NLS-1$
+        pushButton.addListener(SWT.Selection, event -> run(true));
+        new Label(parent, SWT.NONE);
+
         output = new Text(parent, SWT.MULTI | SWT.READ_ONLY | SWT.V_SCROLL | SWT.WRAP);
-        output.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
+        output.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true, 3, 1));
         output.setText(HISTORY.toString());
         Button clear = new Button(parent, SWT.PUSH);
         clear.setText(Messages.get("clearHistory")); //$NON-NLS-1$
@@ -48,20 +95,178 @@ public class GitFlowView extends ViewPart
             HISTORY.setLength(0);
             output.setText(""); //$NON-NLS-1$
         });
+        loadRepositories();
+        getSite().getPage().addSelectionListener(selectionListener);
+    }
+
+    private void loadRepositories()
+    {
+        Repository previous = selectedRepository();
+        repositories.clear();
+        repositories.addAll(RepositorySupport.allRepositories());
+        repositories.sort(Comparator.comparing(repo -> repo.getWorkTree().getAbsolutePath()));
+        repositoryCombo.removeAll();
+        for (Repository repository : repositories)
+            repositoryCombo.add(repository.getWorkTree().getName() + " — " //$NON-NLS-1$
+                + repository.getWorkTree().getParent());
+        if (indexOf(previous) < 0)
+            previous = null;
+        Repository candidate = previous != null ? previous : preferredRepository;
+        if (indexOf(candidate) < 0)
+            candidate = null;
+        if (candidate == null)
+            candidate = Repositories.context(getSite().getPage());
+        if (candidate == null && repositories.size() == 1)
+            candidate = repositories.get(0);
+        selectRepository(candidate);
+    }
+
+    private void selectionChanged(IWorkbenchPart part, ISelection selection)
+    {
+        if (part != this)
+        {
+            Repository repository = Repositories.fromSelection(selection);
+            if (repository != null)
+            {
+                if (indexOf(repository) < 0)
+                    loadRepositories();
+                selectRepository(repository);
+            }
+        }
+    }
+
+    private void selectRepository(Repository repository)
+    {
+        int index = indexOf(repository);
+        if (index < 0)
+            repositoryCombo.deselectAll();
+        else
+            repositoryCombo.select(index);
+        updateRepository();
+    }
+
+    private int indexOf(Repository repository)
+    {
+        if (repository != null)
+        {
+            for (int i = 0; i < repositories.size(); i++)
+            {
+                if (repositories.get(i).getDirectory().equals(repository.getDirectory()))
+                    return i;
+            }
+        }
+        return -1;
+    }
+
+    private Repository selectedRepository()
+    {
+        int index = repositoryCombo == null ? -1 : repositoryCombo.getSelectionIndex();
+        return index < 0 || index >= repositories.size() ? null : repositories.get(index);
+    }
+
+    private void updateRepository()
+    {
+        Repository repository = selectedRepository();
+        if (repository == null)
+            branchLabel.setText(Messages.get("chooseRepository")); //$NON-NLS-1$
+        else
+        {
+            preferredRepository = repository;
+            try
+            {
+                String branch = repository.getBranch();
+                BranchConfig config = new BranchConfig(repository.getConfig(), branch);
+                String upstream = config.getRemoteTrackingBranch();
+                canSync = upstream != null || repository.getConfig().getString(
+                    "remote", "origin", "url") != null; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                branchLabel.setText(branch + "  →  " //$NON-NLS-1$
+                    + (upstream == null ? Messages.get(canSync ? "noUpstream" : "noOrigin") //$NON-NLS-1$ //$NON-NLS-2$
+                        : upstream));
+            }
+            catch (IOException e)
+            {
+                canSync = false;
+                branchLabel.setText(e.getMessage());
+            }
+        }
+        if (repository == null)
+        {
+            canSync = false;
+        }
+        boolean enabled = repository != null && canSync && !RUNNING.containsKey(repository.getDirectory());
+        pullButton.setEnabled(enabled);
+        pushButton.setEnabled(enabled);
+        container.layout(true, true);
+    }
+
+    private void run(boolean push)
+    {
+        Repository repository = selectedRepository();
+        if (repository != null)
+            OperationJob.schedule(repository, getSite().getShell(),
+                Messages.get(push ? "smartPushJob" : "pullJob"), //$NON-NLS-1$ //$NON-NLS-2$
+                push ? PullOperations::smartPush : PullOperations::smartPull,
+                push ? (selected, monitor) -> PullOperations.smartPush(selected, true, monitor)
+                    : (selected, monitor) -> PullOperations.smartPull(selected, true, monitor));
     }
 
     @Override
     public void setFocus()
     {
-        if (output != null && !output.isDisposed())
-            output.setFocus();
+        if (repositoryCombo != null && !repositoryCombo.isDisposed())
+            repositoryCombo.setFocus();
     }
 
     @Override
     public void dispose()
     {
+        getSite().getPage().removeSelectionListener(selectionListener);
         instance = null;
         super.dispose();
+    }
+
+    public static void useRepository(Repository repository)
+    {
+        preferredRepository = repository;
+        onUi(() ->
+        {
+            if (instance != null)
+                instance.selectRepository(repository);
+        });
+    }
+
+    public static void started(Repository repository)
+    {
+        onUi(() ->
+        {
+            RUNNING.merge(repository.getDirectory(), 1, Integer::sum);
+            if (instance != null)
+                instance.updateRepository();
+        });
+    }
+
+    public static boolean isRunning(Repository repository)
+    {
+        return RUNNING.containsKey(repository.getDirectory());
+    }
+
+    public static void finished(Repository repository)
+    {
+        onUi(() ->
+        {
+            RUNNING.computeIfPresent(repository.getDirectory(), (key, count) -> count == 1 ? null : count - 1);
+            if (instance != null)
+                instance.updateRepository();
+        });
+    }
+
+    private static void onUi(Runnable runnable)
+    {
+        Display display = Display.getDefault();
+        if (display.getThread() == Thread.currentThread())
+            runnable.run();
+        else
+            display.asyncExec(runnable);
     }
 
     public static void publish(String message)

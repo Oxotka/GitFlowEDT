@@ -13,13 +13,15 @@ import org.eclipse.jface.viewers.LabelProvider;
 import org.eclipse.jface.viewers.ISelection;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.ui.IEditorInput;
+import org.eclipse.ui.IEditorPart;
+import org.eclipse.ui.IWorkbenchPage;
 import org.eclipse.ui.dialogs.ElementListSelectionDialog;
 import org.eclipse.ui.handlers.HandlerUtil;
 import org.eclipse.core.commands.ExecutionEvent;
 
 import dev.edt.gitflow.core.RepositorySupport;
 
-final class Repositories
+public final class Repositories
 {
     private Repositories()
     {
@@ -27,7 +29,9 @@ final class Repositories
 
     static Repository select(ExecutionEvent event)
     {
-        Repository selected = RepositorySupport.resolveFor(selectedResource(event));
+        Repository selected = fromSelection(HandlerUtil.getCurrentSelection(event));
+        if (selected == null)
+            selected = RepositorySupport.resolveFor(selectedResource(event));
         if (selected != null)
             return selected;
 
@@ -64,6 +68,33 @@ final class Repositories
         }
         IEditorInput input = HandlerUtil.getActiveEditorInput(event);
         return adapt(input);
+    }
+
+    public static Repository fromSelection(ISelection selection)
+    {
+        if (selection instanceof IStructuredSelection structured && !structured.isEmpty())
+        {
+            Object element = structured.getFirstElement();
+            if (element instanceof Repository repository)
+                return repository;
+            if (element instanceof IAdaptable adaptable)
+            {
+                Repository repository = adaptable.getAdapter(Repository.class);
+                if (repository != null)
+                    return repository;
+            }
+            return RepositorySupport.resolveFor(adapt(element));
+        }
+        return null;
+    }
+
+    public static Repository context(IWorkbenchPage page)
+    {
+        Repository selected = fromSelection(page.getSelection());
+        if (selected != null)
+            return selected;
+        IEditorPart editor = page.getActiveEditor();
+        return editor == null ? null : RepositorySupport.resolveFor(adapt(editor.getEditorInput()));
     }
 
     private static IResource adapt(Object object)

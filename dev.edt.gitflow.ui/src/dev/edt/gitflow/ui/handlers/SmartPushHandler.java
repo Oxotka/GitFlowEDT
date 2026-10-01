@@ -10,7 +10,8 @@ public class SmartPushHandler extends AbstractHandler
     @Override
     public Object execute(ExecutionEvent event)
     {
-        OperationJob.schedule(event, Messages.get("smartPushJob"), PullOperations::smartPush); //$NON-NLS-1$
+        OperationJob.schedule(event, Messages.get("smartPushJob"), PullOperations::smartPush, //$NON-NLS-1$
+            (repository, monitor) -> PullOperations.smartPush(repository, true, monitor));
         return null;
     }
 }
