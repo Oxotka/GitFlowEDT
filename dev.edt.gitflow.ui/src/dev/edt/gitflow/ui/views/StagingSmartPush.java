@@ -199,6 +199,16 @@ final class StagingSmartPush
             button.setData(PUSHING, null);
         if (view.getSite().getShell().isDisposed())
             return;
+        if (result.kind() != OperationResult.Kind.NEEDS_CONFIRMATION
+            && !button.isDisposed() && repository.equals(currentRepository(view)))
+            try
+            {
+                view.getClass().getMethod("reload", Repository.class).invoke(view, repository); //$NON-NLS-1$
+            }
+            catch (ReflectiveOperationException e)
+            {
+                log("Не удалось обновить кнопки индексирования после Smart Push.", e); //$NON-NLS-1$
+            }
         if (result.kind() == OperationResult.Kind.NEEDS_CONFIRMATION)
         {
             if (MessageDialog.openQuestion(view.getSite().getShell(), "Git Flow Ops", result.message())) //$NON-NLS-1$
