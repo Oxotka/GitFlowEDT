@@ -22,6 +22,7 @@ import org.eclipse.core.runtime.Platform;
 import org.eclipse.core.runtime.Status;
 import org.eclipse.core.runtime.jobs.Job;
 import org.eclipse.core.runtime.preferences.InstanceScope;
+import org.eclipse.jface.dialogs.Dialog;
 import org.eclipse.jface.dialogs.MessageDialog;
 import org.eclipse.jface.viewers.ISelection;
 import org.eclipse.jface.viewers.ISelectionChangedListener;
@@ -42,10 +43,12 @@ import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Button;
 import org.eclipse.swt.widgets.Combo;
 import org.eclipse.swt.widgets.Composite;
+import org.eclipse.swt.widgets.Control;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Label;
 import org.eclipse.swt.widgets.Menu;
 import org.eclipse.swt.widgets.MenuItem;
+import org.eclipse.swt.widgets.Shell;
 import org.eclipse.swt.widgets.Text;
 import org.eclipse.swt.widgets.Tree;
 import org.eclipse.swt.widgets.TreeColumn;
@@ -376,11 +379,39 @@ public class GitFlowView extends ViewPart
             }
             updatePrimary();
         });
-        menuItem(menu, Messages.get("showHistory"), () -> MessageDialog.openInformation(
-            getSite().getShell(), Messages.get("title"), HISTORY.toString())); //$NON-NLS-1$ //$NON-NLS-2$
+        menuItem(menu, Messages.get("showHistory"), this::showHistory); //$NON-NLS-1$
         menu.addListener(SWT.Hide, event -> anchor.getDisplay().asyncExec(menu::dispose));
         menu.setLocation(anchor.toDisplay(0, anchor.getSize().y));
         menu.setVisible(true);
+    }
+
+    private void showHistory()
+    {
+        String history = HISTORY.length() == 0 ? Messages.get("historyEmpty") : HISTORY.toString(); //$NON-NLS-1$
+        Dialog dialog = new Dialog(getSite().getShell())
+        {
+            @Override
+            protected Control createDialogArea(Composite parent)
+            {
+                Composite area = (Composite) super.createDialogArea(parent);
+                Text text = new Text(area, SWT.BORDER | SWT.MULTI | SWT.WRAP | SWT.V_SCROLL | SWT.READ_ONLY);
+                GridData data = new GridData(SWT.FILL, SWT.FILL, true, true);
+                data.widthHint = 720;
+                data.heightHint = 400;
+                text.setLayoutData(data);
+                text.setText(history);
+                text.selectAll();
+                return area;
+            }
+
+            @Override
+            protected void configureShell(Shell shell)
+            {
+                super.configureShell(shell);
+                shell.setText(Messages.get("showHistory")); //$NON-NLS-1$
+            }
+        };
+        dialog.open();
     }
 
     private static MenuItem menuItem(Menu menu, String title, Runnable action)
