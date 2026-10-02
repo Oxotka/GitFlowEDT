@@ -98,6 +98,7 @@ Windows, EDT 2025.2.6. Mac с EDT 2026.1.1 используется для ра�
   подтверждения; force push не используется.
 - Добавлены Tycho feature и p2 repository. ZIP для установки через мастер EDT:
   `dist/gitflow-ops-0.4.17-preview.zip`; старый dropins ZIP сохранён для истории.
+  Состояние на 0.4.17 зафиксировано коммитом `a1e1084`.
 - Для переключения и переноса коммита есть дерево веток с поиском и избранным
   по репозиторию. Удалённая ветка создаёт локальную tracking-ветку. Для merge
   тот же выбор применяется в верхнем списке штатного окна EGit.
@@ -106,21 +107,31 @@ Windows, EDT 2025.2.6. Mac с EDT 2026.1.1 используется для ра�
 
 ## Проверено
 
-- `.tools/bin/mvn -B -o -Dmaven.repo.local=/private/tmp/gitflow-m2-review verify`
-  на Mac: BUILD SUCCESS, 31 JUnit-тест, включая историю, статус репозитория, pull/push, стеш, checkout,
-  перенос коммита, safe commit и ссылки.
-- p2 ZIP содержит feature, оба бандла и metadata; `unzip -t` проходит.
-- `mvn verify` проходит на Mac: 33 headless-теста без ошибок. `git diff --check`
-  и проверка ZIP через `unzip -t` также проходят.
-  Запуск штатного мастера и установка preview в Windows EDT 2025.2.6 **ещё не
-  проверены**; возможны различия в зависимостях EDT.
+- 2026-10-02, Mac: предыдущая сессия оставила нерабочую сборку — в `GitFlowView`
+  лямбда-параметр `file` конфликтовал с одноимённой локальной переменной метода
+  `changeTree`, UI-модуль не компилировался. После переименования параметра
+  `.tools/bin/mvn -B -o -Dmaven.repo.local=/private/tmp/gitflow-m2-review verify`
+  даёт BUILD SUCCESS: 33 headless-теста, включая историю, статус репозитория,
+  pull/push/fetch, стеш, checkout, перенос коммита, safe commit, возврат файлов
+  к HEAD и ссылки. `git diff --check` чист.
+- `dist/gitflow-ops-0.4.17-preview.zip` собран из этого билда (раньше файл
+  упоминался в документах, но отсутствовал), содержит feature, оба бандла и
+  metadata; `unzip -t` проходит.
+- Всё состояние 0.4.12–0.4.17 зафиксировано коммитом `a1e1084` «Собрать
+  preview 0.4.17 с контекстным меню и деревом веток» (28 файлов, без push).
+  Установка preview и запуск штатного мастера веток в Windows EDT 2025.2.6
+  **ещё не проверены**; возможны различия в зависимостях EDT.
 
 ## Как продолжать
 
 1. Для сборки используется локальный `.tools/bin/mvn` (Maven 3.9.9), системный
    JDK 21, JavaSE-17 в манифестах. Target: `releng/edt-2026-1.target`, локальный
    `~/.p2/pool/plugins`. Машина arm64, EDT x86_64 под Rosetta, поэтому в `pom.xml`
-   задан `macosx/cocoa/x86_64` для Tycho.
+   задан `macosx/cocoa/x86_64` для Tycho. Офлайн-кэш Maven —
+   `/private/tmp/gitflow-m2-review`; после перезагрузки каталог может пропасть,
+   тогда убрать `-o` и `-Dmaven.repo.local` (потребуется сеть) или пересоздать кэш.
+   Готовый ZIP появляется в `dev.edt.gitflow.repository/target/*.zip` и копируется
+   в `dist/gitflow-ops-<версия>-preview.zip`.
 2. До выпуска проверить p2-установку ZIP и команды на Windows EDT 2025.2.6.
    Перед установкой 0.4.17 удалить старую `dropins/gitflow` согласно README.
 3. Для массового выпуска нужен независимый от локального p2-пула build target,
