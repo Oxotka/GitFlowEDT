@@ -32,6 +32,7 @@ import org.eclipse.jgit.lib.BranchConfig;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.lib.RepositoryState;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.custom.CLabel;
 import org.eclipse.swt.custom.SashForm;
@@ -90,6 +91,10 @@ public class GitFlowView extends ViewPart
     private Button branchButton;
     private Label countsLabel;
     private Text messageField;
+    private RepositoryState repositoryState = RepositoryState.SAFE;
+    private String autoFilledMergeMessage;
+    private boolean mergeMessageEdited;
+    private boolean settingMergeMessage;
     private Button primaryButton;
     private Tree changesTree;
     private RecentHistoryPane historyPane;
@@ -172,9 +177,16 @@ public class GitFlowView extends ViewPart
 
         Label messageLabel = new Label(parent, SWT.NONE);
         messageLabel.setText(Messages.get("commitMessage")); //$NON-NLS-1$
-        messageField = new Text(parent, SWT.BORDER | SWT.SINGLE);
-        messageField.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
-        messageField.addModifyListener(event -> updatePrimary());
+        messageField = new Text(parent, SWT.BORDER | SWT.MULTI | SWT.WRAP | SWT.V_SCROLL);
+        GridData messageData = new GridData(SWT.FILL, SWT.CENTER, true, false);
+        messageData.heightHint = messageField.getLineHeight() * 2 + 8;
+        messageField.setLayoutData(messageData);
+        messageField.addModifyListener(event ->
+        {
+            if (!settingMergeMessage && repositoryState == RepositoryState.MERGING_RESOLVED)
+                mergeMessageEdited = true;
+            updatePrimary();
+        });
         primaryButton = new Button(parent, SWT.PUSH);
         primaryButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
         primaryButton.addListener(SWT.Selection, event -> runPrimary());
@@ -447,6 +459,12 @@ public class GitFlowView extends ViewPart
         File directory = repository == null ? null : repository.getDirectory();
         if (!Objects.equals(directory, displayedDirectory))
         {
+            if (autoFilledMergeMessage != null
+                && messageField.getText().equals(autoFilledMergeMessage))
+                messageField.setText(""); //$NON-NLS-1$
+            autoFilledMergeMessage = null;
+            mergeMessageEdited = false;
+            repositoryState = RepositoryState.SAFE;
             displayedDirectory = directory;
             overview = new RepositoryOverview(0, -1, -1);
             changes = new WorkingChanges(List.of(), List.of());
@@ -500,6 +518,9 @@ public class GitFlowView extends ViewPart
                 {
                     WorkingChanges latestChanges = WorkingChanges.read(repository);
                     RepositoryOverview latestOverview = RepositoryOverview.read(repository, latestChanges);
+                    RepositoryState latestState = repository.getRepositoryState();
+                    String mergeMessage = latestState == RepositoryState.MERGING_RESOLVED
+                        ? repository.readMergeCommitMsg() : null;
                     ObjectId latestHead = repository.resolve(Constants.HEAD);
                     List<RecentHistory.Entry> latestHistory = Objects.equals(latestHead, displayedHead)
                         ? null : RecentHistory.read(repository, 30);
@@ -509,6 +530,7 @@ public class GitFlowView extends ViewPart
                         {
                             changes = latestChanges;
                             overview = latestOverview;
+                            updateMergeMessage(latestState, mergeMessage);
                             if (latestHistory != null)
                             {
                                 historyHead = latestHead;
@@ -532,6 +554,37 @@ public class GitFlowView extends ViewPart
         };
         refreshJob.setSystem(true);
         refreshJob.schedule(300);
+    }
+
+    private void updateMergeMessage(RepositoryState state, String mergeMessage)
+    {
+        if (state == RepositoryState.MERGING_RESOLVED && mergeMessage != null
+            && !mergeMessage.isBlank() && !mergeMessageEdited
+            && (messageField.getText().isBlank()
+                || messageField.getText().equals(autoFilledMergeMessage)))
+        {
+            String text = mergeMessage.replace("\r\n", "\n").replace("\n", Text.DELIMITER); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            if (!messageField.getText().equals(text))
+            {
+                settingMergeMessage = true;
+                messageField.setText(text);
+                settingMergeMessage = false;
+            }
+            autoFilledMergeMessage = messageField.getText();
+        }
+        else if (state != RepositoryState.MERGING_RESOLVED)
+        {
+            if (autoFilledMergeMessage != null
+                && messageField.getText().equals(autoFilledMergeMessage))
+            {
+                settingMergeMessage = true;
+                messageField.setText(""); //$NON-NLS-1$
+                settingMergeMessage = false;
+            }
+            autoFilledMergeMessage = null;
+            mergeMessageEdited = false;
+        }
+        repositoryState = state;
     }
 
     private void fillChangesTree()
@@ -608,20 +661,22 @@ public class GitFlowView extends ViewPart
         Repository repository = selectedRepository();
         boolean busy = repository == null || RUNNING.containsKey(repository.getDirectory());
         boolean hasChanges = !changes.staged().isEmpty() || !changes.unstaged().isEmpty();
-        if (hasChanges)
+        boolean mergeReady = repositoryState == RepositoryState.MERGING_RESOLVED;
+        if (hasChanges || mergeReady)
         {
             primaryButton.setText(sendAfterCommit && hasRemote ? Messages.get("commitAndPush") //$NON-NLS-1$
                 : Messages.get("commitOnly")); //$NON-NLS-1$
             boolean tracked = changes.unstaged().stream().anyMatch(change -> !"U".equals(change.state())); //$NON-NLS-1$
             primaryButton.setEnabled(!busy && !messageField.getText().isBlank()
-                && (!changes.staged().isEmpty() || tracked));
+                && (mergeReady || repositoryState == RepositoryState.SAFE
+                    && (!changes.staged().isEmpty() || tracked)));
         }
         else if (hasRemote)
         {
             String counts = overview.incoming() > 0 || overview.outgoing() > 0
                 ? " ↓" + overview.incoming() + " ↑" + overview.outgoing() : ""; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             primaryButton.setText(Messages.get("syncChanges") + counts); //$NON-NLS-1$
-            primaryButton.setEnabled(!busy);
+            primaryButton.setEnabled(!busy && repositoryState == RepositoryState.SAFE);
         }
         else
         {
@@ -635,7 +690,8 @@ public class GitFlowView extends ViewPart
 
     private void runPrimary()
     {
-        if (changes.staged().isEmpty() && changes.unstaged().isEmpty())
+        boolean mergeReady = repositoryState == RepositoryState.MERGING_RESOLVED;
+        if (!mergeReady && changes.staged().isEmpty() && changes.unstaged().isEmpty())
         {
             runSync();
             return;
@@ -643,7 +699,7 @@ public class GitFlowView extends ViewPart
         Repository repository = selectedRepository();
         if (repository == null)
             return;
-        boolean stageTracked = changes.staged().isEmpty();
+        boolean stageTracked = !mergeReady && changes.staged().isEmpty();
         List<String> trackedFiles = changes.unstaged().stream()
             .filter(change -> !"U".equals(change.state())).map(FileChange::path).toList(); //$NON-NLS-1$
         String preview = String.join("\n", trackedFiles.stream().limit(8).toList()); //$NON-NLS-1$
@@ -652,7 +708,7 @@ public class GitFlowView extends ViewPart
         if (stageTracked && !MessageDialog.openQuestion(getSite().getShell(),
             Messages.get("commitOnly"), Messages.get("stageTrackedConfirm") + "\n\n" + preview)) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             return;
-        String message = messageField.getText().trim();
+        String message = messageField.getText().replace("\r\n", "\n").trim(); //$NON-NLS-1$ //$NON-NLS-2$
         boolean send = sendAfterCommit && hasRemote;
         OperationJob.schedule(repository, getSite().getShell(), Messages.get("commitAndPush"), //$NON-NLS-1$
             (selected, monitor) -> CommitOperations.commitAndPush(selected, message,

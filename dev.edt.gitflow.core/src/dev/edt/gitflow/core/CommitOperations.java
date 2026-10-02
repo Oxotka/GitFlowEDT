@@ -10,6 +10,7 @@ import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.Status;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.lib.RepositoryState;
 
 import dev.edt.gitflow.core.OperationResult.Kind;
 
@@ -31,7 +32,9 @@ public final class CommitOperations
     public static OperationResult safeCommit(Repository repository, String message, boolean stageTracked,
         boolean confirmProtected, IProgressMonitor monitor)
     {
-        if (!RepositorySupport.isSafe(repository))
+        RepositoryState state = repository == null ? null : repository.getRepositoryState();
+        boolean mergeReady = state == RepositoryState.MERGING_RESOLVED;
+        if (state != RepositoryState.SAFE && !mergeReady)
             return new OperationResult(Kind.ERROR, "Репозиторий занят другой Git-операцией."); //$NON-NLS-1$
         if (message == null || message.isBlank())
             return new OperationResult(Kind.ERROR, "Введите сообщение коммита."); //$NON-NLS-1$
@@ -44,13 +47,14 @@ public final class CommitOperations
                 return new OperationResult(Kind.NEEDS_CONFIRMATION,
                     "Вы собираетесь сделать коммит в защищённую ветку " + branch + ". Продолжить?"); //$NON-NLS-1$ //$NON-NLS-2$
             Status status = git.status().call();
-            if (status.isClean())
+            if (status.isClean() && !mergeReady)
                 return new OperationResult(Kind.NO_CHANGE, "Изменений для коммита нет."); //$NON-NLS-1$
             if (stageTracked)
                 git.add().setUpdate(true).addFilepattern(".").call(); //$NON-NLS-1$
             monitor.worked(1);
             Status staged = git.status().call();
-            if (staged.getAdded().isEmpty() && staged.getChanged().isEmpty() && staged.getRemoved().isEmpty())
+            if (!mergeReady && staged.getAdded().isEmpty() && staged.getChanged().isEmpty()
+                && staged.getRemoved().isEmpty())
                 return new OperationResult(Kind.ERROR, "Нет подготовленных отслеживаемых изменений."); //$NON-NLS-1$
             git.commit().setMessage(message).call();
             monitor.worked(1);

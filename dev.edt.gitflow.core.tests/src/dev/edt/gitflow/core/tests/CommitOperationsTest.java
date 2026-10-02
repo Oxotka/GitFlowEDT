@@ -9,6 +9,8 @@ import java.nio.file.Path;
 
 import org.eclipse.core.runtime.NullProgressMonitor;
 import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.api.MergeResult;
+import org.eclipse.jgit.lib.RepositoryState;
 import org.eclipse.jgit.transport.URIish;
 import org.junit.Test;
 
@@ -70,6 +72,41 @@ public class CommitOperationsTest
             assertEquals(OperationResult.Kind.SUCCESS,
                 CommitOperations.safeCommit(git.getRepository(), "fix", false, true, monitor).kind()); //$NON-NLS-1$
             assertEquals("fix", git.log().setMaxCount(1).call().iterator().next().getShortMessage()); //$NON-NLS-1$
+        }
+    }
+
+    @Test
+    public void commitsResolvedMergeWithMultilineMessage() throws Exception
+    {
+        Path root = Files.createTempDirectory("gitflow-merge-commit-"); //$NON-NLS-1$
+        try (Git git = Git.init().setDirectory(root.toFile()).call())
+        {
+            Files.writeString(root.resolve("file.txt"), "base\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            git.add().addFilepattern("file.txt").call(); //$NON-NLS-1$
+            git.commit().setMessage("base").call(); //$NON-NLS-1$
+            String original = git.getRepository().getBranch();
+            git.branchCreate().setName("feature").call(); //$NON-NLS-1$
+            git.checkout().setName("feature").call(); //$NON-NLS-1$
+            Files.writeString(root.resolve("file.txt"), "feature\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            git.add().addFilepattern("file.txt").call(); //$NON-NLS-1$
+            git.commit().setMessage("feature").call(); //$NON-NLS-1$
+            git.checkout().setName(original).call();
+            Files.writeString(root.resolve("file.txt"), "main\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            git.add().addFilepattern("file.txt").call(); //$NON-NLS-1$
+            git.commit().setMessage("main").call(); //$NON-NLS-1$
+            MergeResult merge = git.merge().include(git.getRepository().findRef("feature")).call(); //$NON-NLS-1$
+            assertEquals(MergeResult.MergeStatus.CONFLICTING, merge.getMergeStatus());
+            Files.writeString(root.resolve("file.txt"), "resolved\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            git.add().addFilepattern("file.txt").call(); //$NON-NLS-1$
+            assertEquals(RepositoryState.MERGING_RESOLVED, git.getRepository().getRepositoryState());
+
+            String message = "Merge feature\n\nReviewed changes"; //$NON-NLS-1$
+            OperationResult result = CommitOperations.safeCommit(git.getRepository(), message, false,
+                true, new NullProgressMonitor());
+            assertEquals(result.toString(), OperationResult.Kind.SUCCESS, result.kind());
+            var commit = git.log().setMaxCount(1).call().iterator().next();
+            assertEquals(2, commit.getParentCount());
+            assertEquals(message, commit.getFullMessage());
         }
     }
 }
