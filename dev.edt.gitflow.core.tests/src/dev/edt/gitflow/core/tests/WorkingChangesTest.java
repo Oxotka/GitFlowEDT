@@ -110,4 +110,35 @@ public class WorkingChangesTest
             assertTrue(WorkingChanges.read(git.getRepository()).unstaged().isEmpty());
         }
     }
+
+    @Test
+    public void resetAllTrackedKeepsUntrackedFilesAndUnstagesAddedFiles() throws Exception
+    {
+        Path work = Files.createTempDirectory("gitflow-reset-all-"); //$NON-NLS-1$
+        try (Git git = Git.init().setDirectory(work.toFile()).call())
+        {
+            Path tracked = work.resolve("tracked.txt"); //$NON-NLS-1$
+            Path stagedNew = work.resolve("staged-new.txt"); //$NON-NLS-1$
+            Path untracked = work.resolve("untracked.txt"); //$NON-NLS-1$
+            Files.writeString(tracked, "base"); //$NON-NLS-1$
+            git.add().addFilepattern("tracked.txt").call(); //$NON-NLS-1$
+            git.commit().setMessage("base").setAuthor("Test", "test@example.org") //$NON-NLS-1$ //$NON-NLS-2$
+                .setCommitter("Test", "test@example.org").call(); //$NON-NLS-1$
+
+            Files.writeString(tracked, "staged"); //$NON-NLS-1$
+            git.add().addFilepattern("tracked.txt").call(); //$NON-NLS-1$
+            Files.writeString(tracked, "unstaged"); //$NON-NLS-1$
+            Files.writeString(stagedNew, "new"); //$NON-NLS-1$
+            git.add().addFilepattern("staged-new.txt").call(); //$NON-NLS-1$
+            Files.writeString(untracked, "keep"); //$NON-NLS-1$
+
+            assertTrue(WorkingChanges.resetAllTrackedToHead(git.getRepository()).succeeded());
+            assertEquals("base", Files.readString(tracked)); //$NON-NLS-1$
+            assertEquals("new", Files.readString(stagedNew)); //$NON-NLS-1$
+            assertEquals("keep", Files.readString(untracked)); //$NON-NLS-1$
+            WorkingChanges changes = WorkingChanges.read(git.getRepository());
+            assertTrue(changes.staged().isEmpty());
+            assertEquals(2, changes.unstaged().size());
+        }
+    }
 }

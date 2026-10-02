@@ -23,6 +23,43 @@ public final class PullOperations
     {
     }
 
+    public static OperationResult fetch(Repository repository, IProgressMonitor monitor)
+    {
+        if (!RepositorySupport.isSafe(repository))
+            return new OperationResult(Kind.ERROR, "Репозиторий занят другой Git-операцией."); //$NON-NLS-1$
+        String branchName;
+        String remote;
+        try
+        {
+            branchName = repository.getBranch();
+            remote = new BranchConfig(repository.getConfig(), branchName).getRemote();
+            if (remote == null)
+                remote = "origin"; //$NON-NLS-1$
+            if (repository.getConfig().getString("remote", remote, "url") == null) //$NON-NLS-1$ //$NON-NLS-2$
+                return new OperationResult(Kind.ERROR, "Для получения настройте remote " + remote + "."); //$NON-NLS-1$
+        }
+        catch (IOException e)
+        {
+            return new OperationResult(Kind.ERROR, e.getMessage());
+        }
+        monitor.beginTask("Git Fetch", 1); //$NON-NLS-1$
+        try
+        {
+            Git.wrap(repository).fetch().setRemote(remote).call();
+            monitor.worked(1);
+            return new OperationResult(Kind.NO_CHANGE,
+                "Ссылки remote " + remote + " обновлены; состояние ветки пересчитано."); //$NON-NLS-1$
+        }
+        catch (GitAPIException e)
+        {
+            return new OperationResult(Kind.ERROR, "Fetch не выполнен: " + e.getMessage()); //$NON-NLS-1$
+        }
+        finally
+        {
+            monitor.done();
+        }
+    }
+
     public static OperationResult smartPull(Repository repository, IProgressMonitor monitor)
     {
         return smartPull(repository, false, monitor);

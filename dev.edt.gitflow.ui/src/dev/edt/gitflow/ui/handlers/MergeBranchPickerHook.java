@@ -16,7 +16,6 @@ import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Control;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Event;
-import org.eclipse.swt.widgets.Link;
 import org.eclipse.swt.widgets.Shell;
 import org.eclipse.ui.dialogs.FilteredTree;
 
@@ -24,6 +23,7 @@ public final class MergeBranchPickerHook
 {
     private static final String DIALOG = "org.eclipse.egit.ui.internal.dialogs.MergeTargetSelectionDialog"; //$NON-NLS-1$
     private static final String PLUGIN_ID = "dev.edt.gitflow.ui"; //$NON-NLS-1$
+    private static final String ATTACHED = PLUGIN_ID + ".mergePickerAttached"; //$NON-NLS-1$
 
     private MergeBranchPickerHook()
     {
@@ -33,21 +33,48 @@ public final class MergeBranchPickerHook
     {
         display.addFilter(SWT.Show, event ->
         {
-            if (event.widget instanceof Shell shell && shell.getData() != null
-                && DIALOG.equals(shell.getData().getClass().getName()))
-                attach(shell);
+            if (event.widget instanceof Shell shell && !Boolean.TRUE.equals(shell.getData(ATTACHED)))
+            {
+                Object dialog = findDialog(shell.getData());
+                if (dialog != null)
+                    attach(shell, dialog);
+            }
         });
     }
 
-    private static void attach(Shell shell)
+    private static Object findDialog(Object value)
+    {
+        if (value == null)
+            return null;
+        for (Class<?> type = value.getClass(); type != null; type = type.getSuperclass())
+            if (DIALOG.equals(type.getName()))
+                return value;
+        return null;
+    }
+
+    private static void attach(Shell shell, Object dialog)
     {
         Control nativeTree = null;
         BranchPicker picker = null;
-        Link link = null;
         try
         {
-            Object dialog = shell.getData();
-            Class<?> base = dialog.getClass().getSuperclass();
+            Class<?> base = dialog.getClass();
+            while (base != null)
+            {
+                try
+                {
+                    base.getDeclaredField("repo"); //$NON-NLS-1$
+                    base.getDeclaredField("branchTree"); //$NON-NLS-1$
+                    base.getDeclaredMethod("markRef", String.class); //$NON-NLS-1$
+                    break;
+                }
+                catch (NoSuchFieldException | NoSuchMethodException e)
+                {
+                    base = base.getSuperclass();
+                }
+            }
+            if (base == null)
+                throw new NoSuchFieldException("EGit merge dialog fields were not found"); //$NON-NLS-1$
             Field repoField = base.getDeclaredField("repo"); //$NON-NLS-1$
             Field treeField = base.getDeclaredField("branchTree"); //$NON-NLS-1$
             Method markRef = base.getDeclaredMethod("markRef", String.class); //$NON-NLS-1$
@@ -62,9 +89,9 @@ public final class MergeBranchPickerHook
             if (control == null || !(control.getLayoutData() instanceof GridData))
                 return;
             nativeTree = control;
+            Control original = nativeTree;
             Composite parent = nativeTree.getParent();
-            Runnable[] restoreNative = { () -> { } };
-            picker = new BranchPicker(parent, repository, true, choice ->
+            picker = new BranchPicker(parent, repository, true, true, choice ->
             {
                 try
                 {
@@ -74,7 +101,7 @@ public final class MergeBranchPickerHook
                 }
                 catch (ReflectiveOperationException e)
                 {
-                    restoreNative[0].run();
+                    visible(original, true);
                     log(e);
                 }
             }, () ->
@@ -88,40 +115,13 @@ public final class MergeBranchPickerHook
             Composite panel = picker.control();
             GridData pickerData = (GridData) panel.getLayoutData();
             pickerData.horizontalSpan = 1;
-            pickerData.widthHint = 500;
+            pickerData.widthHint = 760;
             pickerData.heightHint = 270;
             panel.moveAbove(nativeTree);
-
-            link = new Link(parent, SWT.NONE);
-            link.setText("<a>" + Messages.get("nativeRefPicker") + "</a>"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            link.setLayoutData(new GridData(SWT.BEGINNING, SWT.CENTER, false, false));
-            link.moveBelow(panel);
-            Control original = nativeTree;
-            Link toggle = link;
-            BranchPicker branchPicker = picker;
-            restoreNative[0] = () ->
-            {
-                visible(original, true);
-                visible(panel, false);
-                toggle.setText("<a>" + Messages.get("branchPicker") + "</a>"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-                parent.layout(true, true);
-            };
-            link.addListener(SWT.Selection, event ->
-            {
-                boolean showNative = !original.isVisible();
-                visible(original, showNative);
-                visible(panel, !showNative);
-                toggle.setText("<a>" + Messages.get(showNative
-                    ? "branchPicker" : "nativeRefPicker") + "</a>"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-                parent.layout(true, true);
-                if (showNative)
-                    viewer.getControl().setFocus();
-                else
-                    branchPicker.focusSearch();
-            });
             visible(nativeTree, false);
             parent.layout(true, true);
             picker.focusSearch();
+            shell.setData(ATTACHED, Boolean.TRUE);
         }
         catch (IOException | ReflectiveOperationException | RuntimeException e)
         {
@@ -129,8 +129,6 @@ public final class MergeBranchPickerHook
                 visible(nativeTree, true);
             if (picker != null && !picker.control().isDisposed())
                 picker.control().dispose();
-            if (link != null && !link.isDisposed())
-                link.dispose();
             if (nativeTree != null && !nativeTree.isDisposed())
                 nativeTree.getParent().layout(true, true);
             log(e);

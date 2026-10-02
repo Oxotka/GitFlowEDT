@@ -29,7 +29,7 @@ final class BranchDialog extends Dialog
     private Button stageButton;
     private Label branchLabel;
     private Label feedback;
-    private boolean creatingBranch;
+    private boolean edtBranchWizardRequested;
     private boolean settingBranch;
     private String branch;
     private String commitMessage;
@@ -55,16 +55,8 @@ final class BranchDialog extends Dialog
         fields.setLayout(new GridLayout(2, false));
         fields.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
 
-        branchLabel = new Label(fields, SWT.NONE);
-        branchLabel.setText(Messages.get("branchName")); //$NON-NLS-1$
-        branchLabel.setLayoutData(new GridData(SWT.BEGINNING, SWT.CENTER, false, false));
-        branchField = new Text(fields, SWT.BORDER);
-        branchField.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
-        branchField.addModifyListener(event ->
-        {
-            if (!settingBranch)
-                selectedChoice = null;
-        });
+        if (mode != Mode.CHECKOUT)
+            createBranchField(fields);
         feedback = new Label(fields, SWT.WRAP);
         GridData feedbackData = new GridData(SWT.FILL, SWT.CENTER, true, false, 2, 1);
         feedbackData.exclude = true;
@@ -74,8 +66,6 @@ final class BranchDialog extends Dialog
         {
             if (mode == Mode.MOVE)
                 createButton = checkbox(fields, Messages.get("createBranch"), false); //$NON-NLS-1$
-            else
-                showBranchField(false);
             String listError = null;
             try
             {
@@ -83,17 +73,13 @@ final class BranchDialog extends Dialog
                 {
                     if (choice == null)
                     {
-                        if (!creatingBranch)
-                            setBranchText(""); //$NON-NLS-1$
+                        setBranchTextIfAvailable(""); //$NON-NLS-1$
                         selectedChoice = null;
                         showFeedback(""); //$NON-NLS-1$
                     }
                     else
                     {
-                        creatingBranch = false;
-                        if (mode == Mode.CHECKOUT)
-                            showBranchField(false);
-                        setBranchText(choice.localName());
+                        setBranchTextIfAvailable(choice.localName());
                         selectedChoice = choice;
                         if (createButton != null)
                             createButton.setSelection(false);
@@ -110,12 +96,8 @@ final class BranchDialog extends Dialog
                     createLink.setLayoutData(new GridData(SWT.BEGINNING, SWT.CENTER, false, false, 2, 1));
                     createLink.addListener(SWT.Selection, event ->
                     {
-                        creatingBranch = true;
-                        selectedChoice = null;
-                        setBranchText(""); //$NON-NLS-1$
-                        showFeedback(""); //$NON-NLS-1$
-                        showBranchField(true);
-                        branchField.setFocus();
+                        edtBranchWizardRequested = true;
+                        cancelPressed();
                     });
                 }
                 getShell().getDisplay().asyncExec(picker::focusSearch);
@@ -155,13 +137,24 @@ final class BranchDialog extends Dialog
         settingBranch = false;
     }
 
-    private void showBranchField(boolean show)
+    private void setBranchTextIfAvailable(String text)
     {
-        branchLabel.setVisible(show);
-        ((GridData) branchLabel.getLayoutData()).exclude = !show;
-        branchField.setVisible(show);
-        ((GridData) branchField.getLayoutData()).exclude = !show;
-        branchField.getParent().layout(true, true);
+        if (branchField != null)
+            setBranchText(text);
+    }
+
+    private void createBranchField(Composite parent)
+    {
+        branchLabel = new Label(parent, SWT.NONE);
+        branchLabel.setText(Messages.get("branchName")); //$NON-NLS-1$
+        branchLabel.setLayoutData(new GridData(SWT.BEGINNING, SWT.CENTER, false, false));
+        branchField = new Text(parent, SWT.BORDER);
+        branchField.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        branchField.addModifyListener(event ->
+        {
+            if (!settingBranch)
+                selectedChoice = null;
+        });
     }
 
     private void showFeedback(String text)
@@ -186,7 +179,8 @@ final class BranchDialog extends Dialog
     @Override
     protected void okPressed()
     {
-        branch = branchField.getText().trim();
+        branch = mode == Mode.CHECKOUT && selectedChoice != null ? selectedChoice.localName()
+            : branchField == null ? "" : branchField.getText().trim(); //$NON-NLS-1$
         if (!dev.edt.gitflow.core.BranchOperations.isValidBranchName(branch))
         {
             showFeedback(Messages.get("invalidBranch")); //$NON-NLS-1$
@@ -201,8 +195,8 @@ final class BranchDialog extends Dialog
                 return;
             }
         }
-        create = mode == Mode.COMMIT || mode == Mode.CHECKOUT && (creatingBranch
-            || selectedChoice != null && selectedChoice.remote() && !selectedChoice.localExists())
+        create = mode == Mode.COMMIT || mode == Mode.CHECKOUT
+            && selectedChoice != null && selectedChoice.remote() && !selectedChoice.localExists()
             || mode == Mode.MOVE && createButton.getSelection();
         startPoint = selectedChoice != null && selectedChoice.remote() && create
             ? selectedChoice.ref() : null;
@@ -219,4 +213,5 @@ final class BranchDialog extends Dialog
     boolean returnToOriginal() { return returnToOriginal; }
     boolean push() { return push; }
     boolean stageTracked() { return stageTracked; }
+    boolean edtBranchWizardRequested() { return edtBranchWizardRequested; }
 }

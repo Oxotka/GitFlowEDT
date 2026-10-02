@@ -65,10 +65,12 @@ import org.eclipse.ui.part.ViewPart;
 import org.osgi.service.prefs.BackingStoreException;
 
 import dev.edt.gitflow.core.CommitOperations;
+import dev.edt.gitflow.core.OperationResult;
 import dev.edt.gitflow.core.PullOperations;
 import dev.edt.gitflow.core.RecentHistory;
 import dev.edt.gitflow.core.RepositoryOverview;
 import dev.edt.gitflow.core.RepositorySupport;
+import dev.edt.gitflow.core.StashOperations;
 import dev.edt.gitflow.core.WorkingChanges;
 import dev.edt.gitflow.core.WorkingChanges.FileChange;
 import dev.edt.gitflow.ui.handlers.Messages;
@@ -92,6 +94,7 @@ public class GitFlowView extends ViewPart
     private Composite container;
     private Combo repositoryCombo;
     private Button branchButton;
+    private Button syncButton;
     private Label countsLabel;
     private Text messageField;
     private RepositoryState repositoryState = RepositoryState.SAFE;
@@ -99,6 +102,8 @@ public class GitFlowView extends ViewPart
     private boolean mergeMessageEdited;
     private boolean settingMergeMessage;
     private Button primaryButton;
+    private Button settingsButton;
+    private Button historyButton;
     private Tree changesTree;
     private RecentHistoryPane historyPane;
     private ObjectId historyHead;
@@ -169,10 +174,10 @@ public class GitFlowView extends ViewPart
         });
         countsLabel = new Label(header, SWT.NONE);
         countsLabel.setToolTipText(Messages.get("statusHint")); //$NON-NLS-1$
-        Button more = new Button(header, SWT.PUSH);
-        more.setText("⋯"); //$NON-NLS-1$
-        more.setToolTipText(Messages.get("moreActions")); //$NON-NLS-1$
-        more.addListener(SWT.Selection, event -> showMenu(more));
+        syncButton = new Button(header, SWT.PUSH);
+        syncButton.setText("⟳"); //$NON-NLS-1$
+        syncButton.setToolTipText(Messages.get("fetchHint")); //$NON-NLS-1$
+        syncButton.addListener(SWT.Selection, event -> runAdaptiveSync());
 
         repositoryCombo = new Combo(parent, SWT.DROP_DOWN | SWT.READ_ONLY);
         repositoryCombo.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
@@ -184,15 +189,37 @@ public class GitFlowView extends ViewPart
         GridData messageData = new GridData(SWT.FILL, SWT.CENTER, true, false);
         messageData.heightHint = messageField.getLineHeight() * 2 + 8;
         messageField.setLayoutData(messageData);
+        messageField.setToolTipText(Messages.get("commitShortcutHint")); //$NON-NLS-1$
         messageField.addModifyListener(event ->
         {
             if (!settingMergeMessage && repositoryState == RepositoryState.MERGING_RESOLVED)
                 mergeMessageEdited = true;
             updatePrimary();
         });
-        primaryButton = new Button(parent, SWT.PUSH);
+        messageField.addListener(SWT.KeyDown, event ->
+        {
+            if (event.keyCode == SWT.CR && (event.stateMask & SWT.MOD1) != 0)
+            {
+                event.doit = false;
+                if (primaryButton.isEnabled())
+                    runPrimary();
+            }
+        });
+        Composite primaryRow = new Composite(parent, SWT.NONE);
+        primaryRow.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        GridLayout primaryLayout = new GridLayout(2, false);
+        primaryLayout.marginWidth = 0;
+        primaryLayout.marginHeight = 0;
+        primaryLayout.horizontalSpacing = 4;
+        primaryRow.setLayout(primaryLayout);
+        primaryButton = new Button(primaryRow, SWT.PUSH);
         primaryButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
         primaryButton.addListener(SWT.Selection, event -> runPrimary());
+        settingsButton = new Button(primaryRow, SWT.PUSH);
+        settingsButton.setText("⚙"); //$NON-NLS-1$
+        settingsButton.setToolTipText(Messages.get("settings")); //$NON-NLS-1$
+        settingsButton.setLayoutData(new GridData(SWT.CENTER, SWT.CENTER, false, false));
+        settingsButton.addListener(SWT.Selection, event -> showSettingsMenu(settingsButton));
 
         SashForm content = new SashForm(parent, SWT.VERTICAL);
         content.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
@@ -200,11 +227,22 @@ public class GitFlowView extends ViewPart
         changesTree = changeTree(content);
         historyPane = new RecentHistoryPane(content);
         content.setWeights(70, 30);
-        feedbackLabel = new CLabel(parent, SWT.NONE);
+        Composite footer = new Composite(parent, SWT.NONE);
+        footer.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        GridLayout footerLayout = new GridLayout(2, false);
+        footerLayout.marginWidth = 0;
+        footerLayout.marginHeight = 0;
+        footerLayout.horizontalSpacing = 4;
+        footer.setLayout(footerLayout);
+        feedbackLabel = new CLabel(footer, SWT.NONE);
         GridData feedbackData = new GridData(SWT.FILL, SWT.CENTER, true, false);
         feedbackData.widthHint = 0;
         feedbackLabel.setLayoutData(feedbackData);
         feedbackLabel.setText(Messages.get("ready")); //$NON-NLS-1$
+        historyButton = new Button(footer, SWT.PUSH);
+        historyButton.setText("◷"); //$NON-NLS-1$
+        historyButton.setToolTipText(Messages.get("showHistory")); //$NON-NLS-1$
+        historyButton.addListener(SWT.Selection, event -> showHistory());
 
         fillChangesTree();
         loadRepositories();
@@ -237,8 +275,10 @@ public class GitFlowView extends ViewPart
             TreeItem item = tree.getItem(new Point(event.x, event.y));
             if (item == null)
                 tree.setToolTipText(null);
-            else if (item.getBounds(1).contains(event.x, event.y) && canDiscard(item))
-                tree.setToolTipText(Messages.get("discardChanges")); //$NON-NLS-1$
+            else if (item.getBounds(1).contains(event.x, event.y)
+                && (canDiscard(item) || isChangeGroup(item) && canDiscardAllChanges()))
+                tree.setToolTipText(Messages.get(isChangeGroup(item)
+                    ? "discardAllChanges" : "discardChanges")); //$NON-NLS-1$
             else if (item.getBounds(2).contains(event.x, event.y))
             {
                 boolean staged = item.getData() instanceof Boolean value ? value
@@ -253,10 +293,15 @@ public class GitFlowView extends ViewPart
         });
         tree.addListener(SWT.MouseDown, event ->
         {
+            if (event.button != 1)
+                return;
             TreeItem item = tree.getItem(new Point(event.x, event.y));
             if (item == null)
                 return;
-            if (item.getBounds(1).contains(event.x, event.y) && canDiscard(item))
+            if (item.getBounds(1).contains(event.x, event.y)
+                && isChangeGroup(item) && canDiscardAllChanges())
+                discardAllChanges();
+            else if (item.getBounds(1).contains(event.x, event.y) && canDiscard(item))
                 discardFile((FileChange) item.getData());
             else if (item.getBounds(2).contains(event.x, event.y))
                 activateChange(item, true);
@@ -282,7 +327,8 @@ public class GitFlowView extends ViewPart
             TreeItem item = tree.getItem(tree.toControl(event.x, event.y));
             if (item == null && tree.getSelectionCount() > 0)
                 item = tree.getSelection()[0];
-            if (item == null || item.getData() instanceof Boolean && item.getItemCount() == 0)
+            if (item == null || item.getData() instanceof Boolean && item.getItemCount() == 0
+                && !(isChangeGroup(item) && (canDiscardAllChanges() || hasChanges())))
                 event.doit = false;
             else
                 tree.setSelection(item);
@@ -297,17 +343,57 @@ public class GitFlowView extends ViewPart
             Repository repository = selectedRepository();
             boolean busy = repository == null || isRunning(repository);
             if (item.getData() instanceof Boolean staged)
-                menuItem(menu, Messages.get(staged ? "unstageAll" : "stageAll"), //$NON-NLS-1$ //$NON-NLS-2$
-                    () -> changeAll(staged)).setEnabled(!busy);
+            {
+                boolean added = false;
+                if (canDiscardAllChanges())
+                {
+                    menuItem(menu, Messages.get("discardAllChanges"), this::discardAllChanges) //$NON-NLS-1$
+                        .setEnabled(!busy);
+                    added = true;
+                }
+                if (item.getItemCount() > 0)
+                {
+                    if (added)
+                        new MenuItem(menu, SWT.SEPARATOR);
+                    menuItem(menu, Messages.get(staged ? "unstageAll" : "stageAll"), //$NON-NLS-1$ //$NON-NLS-2$
+                        () -> changeAll(staged)).setEnabled(!busy);
+                    added = true;
+                }
+                if (hasChanges())
+                {
+                    if (added)
+                        new MenuItem(menu, SWT.SEPARATOR);
+                    menuItem(menu, Messages.get("hideAllChanges"), this::hideChanges) //$NON-NLS-1$
+                        .setEnabled(!busy);
+                }
+            }
             else if (item.getData() instanceof FileChange change)
             {
                 boolean staged = Boolean.TRUE.equals(item.getParentItem().getData());
-                menuItem(menu, Messages.get("openDiffHint"), () -> openDiff(change.path(), staged)); //$NON-NLS-1$
-                menuItem(menu, Messages.get(staged ? "unstageFile" : "stageFile"), //$NON-NLS-1$ //$NON-NLS-2$
-                    () -> changeFile(change.path(), staged)).setEnabled(!busy);
+                menuItem(menu, Messages.get("openChanges"), () -> openDiff(change.path(), staged)); //$NON-NLS-1$
+                MenuItem open = menuItem(menu, Messages.get("openFile"), () -> openFile(change.path())); //$NON-NLS-1$
+                open.setEnabled(workspaceFile(change.path()) != null && !"D".equals(change.state())); //$NON-NLS-1$
+                new MenuItem(menu, SWT.SEPARATOR);
+                MenuItem history = menuItem(menu, Messages.get("fileHistory"), //$NON-NLS-1$
+                    () -> openFileHistory(change.path()));
+                history.setEnabled(workspaceFile(change.path()) != null
+                    && !"U".equals(change.state()) && !"A".equals(change.state()) //$NON-NLS-1$ //$NON-NLS-2$
+                    && changes.staged().stream().noneMatch(entry -> entry.path().equals(change.path())
+                        && "A".equals(entry.state()))); //$NON-NLS-1$
+                new MenuItem(menu, SWT.SEPARATOR);
+                boolean added = false;
                 if (canDiscard(item))
+                {
                     menuItem(menu, Messages.get("discardChanges"), //$NON-NLS-1$
                         () -> discardFile(change)).setEnabled(!busy);
+                    added = true;
+                }
+                menuItem(menu, Messages.get(staged ? "unstageFile" : "stageFile"), //$NON-NLS-1$ //$NON-NLS-2$
+                    () -> changeFile(change.path(), staged)).setEnabled(!busy);
+                if (added)
+                    new MenuItem(menu, SWT.SEPARATOR);
+                menuItem(menu, Messages.get("hideChanges"), this::hideChanges) //$NON-NLS-1$
+                    .setEnabled(!busy);
             }
         });
         return tree;
@@ -343,24 +429,52 @@ public class GitFlowView extends ViewPart
 
     private boolean canDiscard(TreeItem item)
     {
-        return item.getData() instanceof FileChange change
-            && canDiscard(change, Boolean.TRUE.equals(item.getParentItem().getData()));
+        return item.getData() instanceof FileChange change && canDiscard(change);
     }
 
-    private boolean canDiscard(FileChange change, boolean staged)
+    private boolean canDiscard(FileChange change)
     {
-        return !staged && ("M".equals(change.state()) || "D".equals(change.state())) //$NON-NLS-1$ //$NON-NLS-2$
+        return ("M".equals(change.state()) || "D".equals(change.state())) //$NON-NLS-1$ //$NON-NLS-2$
             && changes.staged().stream().noneMatch(file -> file.path().equals(change.path())
                 && "A".equals(file.state())); //$NON-NLS-1$
     }
 
-    private void showMenu(Button anchor)
+    private static boolean isChangeGroup(TreeItem item)
+    {
+        return item.getData() instanceof Boolean;
+    }
+
+    private boolean hasChanges()
+    {
+        return !changes.staged().isEmpty() || !changes.unstaged().isEmpty();
+    }
+
+    private boolean canDiscardAllChanges()
+    {
+        for (FileChange change : changes.staged())
+            if ("M".equals(change.state()) || "D".equals(change.state()) || "A".equals(change.state())) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                return true;
+        for (FileChange change : changes.unstaged())
+            if ("M".equals(change.state()) || "D".equals(change.state())) //$NON-NLS-1$ //$NON-NLS-2$
+                return true;
+        return false;
+    }
+
+    private int discardableChangeCount()
+    {
+        Set<String> paths = new HashSet<>();
+        for (FileChange change : changes.staged())
+            if ("M".equals(change.state()) || "D".equals(change.state()) || "A".equals(change.state())) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                paths.add(change.path());
+        for (FileChange change : changes.unstaged())
+            if ("M".equals(change.state()) || "D".equals(change.state())) //$NON-NLS-1$ //$NON-NLS-2$
+                paths.add(change.path());
+        return paths.size();
+    }
+
+    private void showSettingsMenu(Button anchor)
     {
         Menu menu = new Menu(anchor);
-        menuItem(menu, Messages.get("syncChanges"), () -> runSync()); //$NON-NLS-1$
-        menuItem(menu, Messages.get("pullJob"), () -> runPull()); //$NON-NLS-1$
-        menuItem(menu, Messages.get("smartPushJob"), () -> runSync()); //$NON-NLS-1$
-        new MenuItem(menu, SWT.SEPARATOR);
         MenuItem send = new MenuItem(menu, SWT.CHECK);
         send.setText(Messages.get("sendAfterCommit")); //$NON-NLS-1$
         send.setSelection(sendAfterCommit);
@@ -379,7 +493,6 @@ public class GitFlowView extends ViewPart
             }
             updatePrimary();
         });
-        menuItem(menu, Messages.get("showHistory"), this::showHistory); //$NON-NLS-1$
         menu.addListener(SWT.Hide, event -> anchor.getDisplay().asyncExec(menu::dispose));
         menu.setLocation(anchor.toDisplay(0, anchor.getSize().y));
         menu.setVisible(true);
@@ -671,13 +784,14 @@ public class GitFlowView extends ViewPart
         TreeItem group = new TreeItem(changesTree, SWT.NONE);
         group.setText(new String[] {
             Messages.get(staged ? "stagedChanges" : "unstagedChanges") + " · " + files.size(), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            "", files.isEmpty() ? "" : staged ? "−" : "+"}); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            canDiscardAllChanges() ? "↶" : "", //$NON-NLS-1$ //$NON-NLS-2$
+            files.isEmpty() ? "" : staged ? "−" : "+"}); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         group.setData(staged);
         for (FileChange change : files)
         {
             TreeItem item = new TreeItem(group, SWT.NONE);
             item.setText(new String[] {change.state() + "  " + change.path(),
-                canDiscard(change, staged)
+                canDiscard(change)
                     ? "↶" : "", staged ? "−" : "+"}); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
             item.setData(change);
             if (staged == selectedStaged && change.path().equals(selectedPath))
@@ -702,13 +816,6 @@ public class GitFlowView extends ViewPart
                 && (mergeReady || repositoryState == RepositoryState.SAFE
                     && (!changes.staged().isEmpty() || tracked)));
         }
-        else if (hasRemote)
-        {
-            String counts = overview.incoming() > 0 || overview.outgoing() > 0
-                ? " ↓" + overview.incoming() + " ↑" + overview.outgoing() : ""; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            primaryButton.setText(Messages.get("syncChanges") + counts); //$NON-NLS-1$
-            primaryButton.setEnabled(!busy && repositoryState == RepositoryState.SAFE);
-        }
         else
         {
             primaryButton.setText(Messages.get("upToDate")); //$NON-NLS-1$
@@ -716,7 +823,78 @@ public class GitFlowView extends ViewPart
         }
         countsLabel.setText(overview.incoming() < 0 ? "" //$NON-NLS-1$
             : "↓" + overview.incoming() + " ↑" + overview.outgoing()); //$NON-NLS-1$ //$NON-NLS-2$
+        syncButton.setText(syncButtonText());
+        syncButton.setToolTipText(syncTooltip());
+        syncButton.setEnabled(repository != null && hasRemote && !busy
+            && repositoryState == RepositoryState.SAFE);
         container.layout(true, true);
+    }
+
+    private String syncTooltip()
+    {
+        if (overview.incoming() > 0 && overview.outgoing() == 0)
+            return Messages.get("smartPullHint"); //$NON-NLS-1$
+        if (overview.outgoing() > 0 && overview.incoming() == 0)
+            return Messages.get("smartPushHint"); //$NON-NLS-1$
+        if (overview.incoming() > 0 && overview.outgoing() > 0)
+            return Messages.get("smartSyncHint"); //$NON-NLS-1$
+        return Messages.get("fetchHint"); //$NON-NLS-1$
+    }
+
+    private String syncButtonText()
+    {
+        String action;
+        String counts = ""; //$NON-NLS-1$
+        if (overview.incoming() > 0 && overview.outgoing() == 0)
+        {
+            action = Messages.get("syncPullAction"); //$NON-NLS-1$
+            counts = " " + overview.incoming() + "↓"; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        else if (overview.outgoing() > 0 && overview.incoming() == 0)
+        {
+            action = Messages.get("syncPushAction"); //$NON-NLS-1$
+            counts = " " + overview.outgoing() + "↑"; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        else if (overview.incoming() > 0 && overview.outgoing() > 0)
+        {
+            action = Messages.get("syncBothAction"); //$NON-NLS-1$
+            counts = " " + overview.incoming() + "↓ " + overview.outgoing() + "↑"; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        else
+            action = Messages.get("syncIdleAction"); //$NON-NLS-1$
+        return "⟳ " + action + counts; //$NON-NLS-1$
+    }
+
+    private void runAdaptiveSync()
+    {
+        if (overview.incoming() <= 0 && overview.outgoing() <= 0)
+            runFetch();
+        else if (overview.incoming() > 0 && overview.outgoing() == 0)
+            runPull();
+        else
+            runSync();
+    }
+
+    private void runFetch()
+    {
+        Repository repository = selectedRepository();
+        if (repository != null)
+            OperationJob.schedule(repository, getSite().getShell(), Messages.get("fetchJob"),
+                PullOperations::fetch, null); //$NON-NLS-1$
+    }
+
+    private void discardAllChanges()
+    {
+        Repository repository = selectedRepository();
+        if (repository == null || isRunning(repository) || !canDiscardAllChanges())
+            return;
+        String question = Messages.get("discardAllConfirm") + "\n\n" //$NON-NLS-1$
+            + Messages.get("discardableChangeCount") + " " + discardableChangeCount(); //$NON-NLS-1$
+        if (!MessageDialog.openConfirm(getSite().getShell(),
+            Messages.get("discardAllChanges"), question)) //$NON-NLS-1$
+            return;
+        OperationJob.schedule(repository, getSite().getShell(), Messages.get("discardAllChanges"), //$NON-NLS-1$
+            (selected, monitor) -> WorkingChanges.resetAllTrackedToHead(selected), null);
     }
 
     private void runPrimary()
@@ -808,6 +986,78 @@ public class GitFlowView extends ViewPart
         updatePrimary();
         OperationJob.schedule(repository, getSite().getShell(), Messages.get("discardChanges"), //$NON-NLS-1$
             (selected, monitor) -> WorkingChanges.resetFileToHead(selected, file.path()), null);
+    }
+
+    private void openFile(String path)
+    {
+        IFile file = workspaceFile(path);
+        if (file == null)
+        {
+            publish(Messages.get("fileOutsideWorkspace") + " " + path); //$NON-NLS-1$ //$NON-NLS-2$
+            return;
+        }
+        try
+        {
+            IDE.openEditor(getSite().getPage(), file);
+        }
+        catch (PartInitException e)
+        {
+            publish(Messages.get("openFileFailed") + " " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+    }
+
+    private void openFileHistory(String path)
+    {
+        IFile file = workspaceFile(path);
+        if (file == null)
+        {
+            publish(Messages.get("fileOutsideWorkspace") + " " + path); //$NON-NLS-1$ //$NON-NLS-2$
+            return;
+        }
+        selectionProvider.setSelection(new StructuredSelection(file));
+        try
+        {
+            getSite().getService(IHandlerService.class)
+                .executeCommand("org.eclipse.egit.ui.team.ShowHistory", null); //$NON-NLS-1$
+        }
+        catch (Exception e)
+        {
+            publish(Messages.get("fileHistoryFailed") + " " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+    }
+
+    private IFile workspaceFile(String path)
+    {
+        Repository repository = selectedRepository();
+        if (repository == null)
+            return null;
+        File file = new File(repository.getWorkTree(), path);
+        IFile[] workspaceFiles = ResourcesPlugin.getWorkspace().getRoot()
+            .findFilesForLocationURI(file.toURI());
+        return workspaceFiles.length == 0 ? null : workspaceFiles[0];
+    }
+
+    private void hideChanges()
+    {
+        Repository repository = selectedRepository();
+        if (repository == null || isRunning(repository))
+            return;
+        OperationJob.schedule(repository, getSite().getShell(), Messages.get("hideChanges"), //$NON-NLS-1$
+            (selected, monitor) ->
+            {
+                if (!RepositorySupport.isSafe(selected))
+                    return new OperationResult(OperationResult.Kind.ERROR, Messages.get("busy")); //$NON-NLS-1$
+                StashOperations.Result result = StashOperations.quickStash(selected, true, monitor);
+                return switch (result.outcome())
+                {
+                    case CREATED -> new OperationResult(OperationResult.Kind.SUCCESS,
+                        Messages.get("created") + result.detail() + Messages.get("createdEnd")); //$NON-NLS-1$ //$NON-NLS-2$
+                    case NO_CHANGES -> new OperationResult(OperationResult.Kind.NO_CHANGE,
+                        Messages.get("noChanges")); //$NON-NLS-1$
+                    case APPLIED, NOT_FOUND, CONFLICTS, ERROR ->
+                        new OperationResult(OperationResult.Kind.ERROR, result.detail());
+                };
+            }, null);
     }
 
     private void changeAll(boolean staged)

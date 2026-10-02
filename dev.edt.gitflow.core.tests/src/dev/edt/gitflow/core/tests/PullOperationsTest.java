@@ -231,6 +231,38 @@ public class PullOperationsTest
         }
     }
 
+    @Test
+    public void fetchUpdatesRemoteTrackingWithoutChangingHeadOrWorktree() throws Exception
+    {
+        Path root = Files.createTempDirectory("gitflow-fetch-only-"); //$NON-NLS-1$
+        Path bare = root.resolve("origin.git"); //$NON-NLS-1$
+        Path seed = root.resolve("seed"); //$NON-NLS-1$
+        Path work = root.resolve("work"); //$NON-NLS-1$
+        try (Git origin = Git.init().setBare(true).setDirectory(bare.toFile()).call();
+             Git source = Git.init().setDirectory(seed.toFile()).call())
+        {
+            commit(source, seed, "base.txt", "base"); //$NON-NLS-1$ //$NON-NLS-2$
+            source.remoteAdd().setName("origin").setUri(new URIish(bare.toUri().toString())).call(); //$NON-NLS-1$
+            source.push().setRemote("origin").add(source.getRepository().getFullBranch()).call(); //$NON-NLS-1$
+            try (Git local = Git.cloneRepository().setURI(bare.toUri().toString())
+                .setDirectory(work.toFile()).call())
+            {
+                var head = local.getRepository().resolve("HEAD"); //$NON-NLS-1$
+                Files.writeString(work.resolve("local.txt"), "keep"); //$NON-NLS-1$ //$NON-NLS-2$
+                commit(source, seed, "remote.txt", "remote"); //$NON-NLS-1$ //$NON-NLS-2$
+                source.push().setRemote("origin").add(source.getRepository().getFullBranch()).call(); //$NON-NLS-1$
+
+                OperationResult result = PullOperations.fetch(local.getRepository(), new NullProgressMonitor());
+
+                assertTrue(result.toString(), result.succeeded());
+                assertEquals(head, local.getRepository().resolve("HEAD")); //$NON-NLS-1$
+                assertEquals("keep", Files.readString(work.resolve("local.txt"))); //$NON-NLS-1$ //$NON-NLS-2$
+                assertEquals(source.getRepository().resolve("HEAD"), //$NON-NLS-1$
+                    local.getRepository().resolve("refs/remotes/origin/" + local.getRepository().getBranch())); //$NON-NLS-1$
+            }
+        }
+    }
+
     private static void commit(Git git, Path directory, String file, String contents) throws Exception
     {
         Files.writeString(directory.resolve(file), contents);

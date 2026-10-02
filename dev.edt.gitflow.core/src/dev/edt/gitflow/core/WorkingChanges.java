@@ -2,7 +2,9 @@ package dev.edt.gitflow.core;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.Status;
@@ -90,6 +92,34 @@ public record WorkingChanges(List<FileChange> staged, List<FileChange> unstaged)
         catch (GitAPIException e)
         {
             return new OperationResult(Kind.ERROR, "Вернуть файл не удалось: " + e.getMessage()); //$NON-NLS-1$
+        }
+    }
+
+    public static OperationResult resetAllTrackedToHead(Repository repository)
+    {
+        if (!RepositorySupport.isSafe(repository))
+            return new OperationResult(Kind.ERROR, "Репозиторий занят другой Git-операцией."); //$NON-NLS-1$
+        try
+        {
+            Git git = Git.wrap(repository);
+            Status status = git.status().call();
+            Set<String> paths = new LinkedHashSet<>();
+            paths.addAll(status.getChanged());
+            paths.addAll(status.getModified());
+            paths.addAll(status.getMissing());
+            paths.addAll(status.getRemoved());
+            for (String path : status.getAdded())
+                paths.remove(path);
+            for (String path : paths)
+                git.checkout().setStartPoint(Constants.HEAD).addPath(path).call();
+            for (String path : status.getAdded())
+                git.reset().addPath(path).call();
+            return new OperationResult(Kind.SUCCESS,
+                "Отслеживаемые файлы возвращены к HEAD; подготовленные новые файлы сняты с подготовки, но сохранены; остальные новые файлы и конфликты не изменены."); //$NON-NLS-1$
+        }
+        catch (GitAPIException e)
+        {
+            return new OperationResult(Kind.ERROR, "Вернуть изменения не удалось: " + e.getMessage()); //$NON-NLS-1$
         }
     }
 }
