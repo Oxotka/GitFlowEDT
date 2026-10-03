@@ -7,3 +7,6 @@ bin/
 
 # OS
 .DS_Store
+
+# Local preview archives
+dist/*.zip
