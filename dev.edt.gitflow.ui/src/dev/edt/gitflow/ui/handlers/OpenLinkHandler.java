@@ -20,7 +20,7 @@ import dev.edt.gitflow.core.GitLinks;
 import dev.edt.gitflow.core.RepositorySupport;
 import dev.edt.gitflow.ui.views.GitFlowView;
 
-abstract class OpenLinkHandler extends AbstractHandler
+public abstract class OpenLinkHandler extends AbstractHandler
 {
     protected abstract GitLinks.Target target();
 
@@ -35,6 +35,12 @@ abstract class OpenLinkHandler extends AbstractHandler
         }
         IResource resource = Repositories.selectedResource(event);
         String path = target() == GitLinks.Target.FILE ? RepositorySupport.relativePath(resource) : null;
+        open(repository, target(), path);
+        return null;
+    }
+
+    public static void open(Repository repository, GitLinks.Target target, String path)
+    {
         String[] url = new String[1];
         String[] error = new String[1];
         Job job = new Job(Messages.get("openLinkTitle")) //$NON-NLS-1$
@@ -44,7 +50,7 @@ abstract class OpenLinkHandler extends AbstractHandler
             {
                 try
                 {
-                    url[0] = GitLinks.link(repository, target(), path);
+                    url[0] = GitLinks.link(repository, target, path);
                     return Status.OK_STATUS;
                 }
                 catch (java.io.IOException | IllegalArgumentException e)
@@ -83,6 +89,5 @@ abstract class OpenLinkHandler extends AbstractHandler
             }
         });
         job.schedule();
-        return null;
     }
 }

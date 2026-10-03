@@ -1,5 +1,8 @@
 package dev.edt.gitflow.core;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
@@ -74,6 +77,59 @@ public record WorkingChanges(List<FileChange> staged, List<FileChange> unstaged)
         }
     }
 
+    public static OperationResult stageAll(Repository repository)
+    {
+        try
+        {
+            Git git = Git.wrap(repository);
+            Status status = git.status().call();
+            Set<String> paths = new LinkedHashSet<>();
+            paths.addAll(status.getModified());
+            paths.addAll(status.getUntracked());
+            paths.addAll(status.getConflicting());
+            if (!paths.isEmpty())
+            {
+                var add = git.add();
+                paths.forEach(add::addFilepattern);
+                add.call();
+            }
+            if (!status.getMissing().isEmpty())
+            {
+                var add = git.add().setUpdate(true);
+                status.getMissing().forEach(add::addFilepattern);
+                add.call();
+            }
+            return new OperationResult(Kind.SUCCESS, "Подготовка всех изменений завершена."); //$NON-NLS-1$
+        }
+        catch (GitAPIException e)
+        {
+            return new OperationResult(Kind.ERROR, "Подготовить все изменения не удалось: " + e.getMessage()); //$NON-NLS-1$
+        }
+    }
+
+    public static OperationResult unstageAll(Repository repository)
+    {
+        try
+        {
+            Status status = Git.wrap(repository).status().call();
+            Set<String> paths = new LinkedHashSet<>();
+            paths.addAll(status.getAdded());
+            paths.addAll(status.getChanged());
+            paths.addAll(status.getRemoved());
+            if (!paths.isEmpty())
+            {
+                var reset = Git.wrap(repository).reset();
+                paths.forEach(reset::addPath);
+                reset.call();
+            }
+            return new OperationResult(Kind.SUCCESS, "Все файлы возвращены в изменения."); //$NON-NLS-1$
+        }
+        catch (GitAPIException e)
+        {
+            return new OperationResult(Kind.ERROR, "Вернуть все файлы в изменения не удалось: " + e.getMessage()); //$NON-NLS-1$
+        }
+    }
+
     public static OperationResult resetFileToHead(Repository repository, String path)
     {
         if (!RepositorySupport.isSafe(repository))
@@ -95,7 +151,29 @@ public record WorkingChanges(List<FileChange> staged, List<FileChange> unstaged)
         }
     }
 
-    public static OperationResult resetAllTrackedToHead(Repository repository)
+    public static OperationResult deleteUntrackedFile(Repository repository, String path)
+    {
+        if (!RepositorySupport.isSafe(repository))
+            return new OperationResult(Kind.ERROR, "Репозиторий занят другой Git-операцией."); //$NON-NLS-1$
+        try
+        {
+            Status status = Git.wrap(repository).status().call();
+            if (!status.getUntracked().contains(path))
+                return new OperationResult(Kind.ERROR, "Удалить можно только новый неотслеживаемый файл: " + path); //$NON-NLS-1$
+            Path root = repository.getWorkTree().toPath().toAbsolutePath().normalize();
+            Path file = root.resolve(path).normalize();
+            if (!file.startsWith(root) || file.equals(root) || Files.isDirectory(file))
+                return new OperationResult(Kind.ERROR, "Недопустимый путь нового файла: " + path); //$NON-NLS-1$
+            Files.delete(file);
+            return new OperationResult(Kind.SUCCESS, "Новый файл удалён: " + path, true); //$NON-NLS-1$
+        }
+        catch (GitAPIException | IOException e)
+        {
+            return new OperationResult(Kind.ERROR, "Удалить новый файл не удалось: " + e.getMessage()); //$NON-NLS-1$
+        }
+    }
+
+    public static OperationResult discardAllChanges(Repository repository)
     {
         if (!RepositorySupport.isSafe(repository))
             return new OperationResult(Kind.ERROR, "Репозиторий занят другой Git-операцией."); //$NON-NLS-1$
@@ -109,18 +187,35 @@ public record WorkingChanges(List<FileChange> staged, List<FileChange> unstaged)
             paths.addAll(status.getModified());
             paths.addAll(status.getMissing());
             paths.addAll(status.getRemoved());
-            for (String path : status.getAdded())
-                paths.remove(path);
-            workspaceChanged = !paths.isEmpty();
-            for (String path : paths)
-                git.checkout().setStartPoint(Constants.HEAD).addPath(path).call();
-            for (String path : status.getAdded())
-                git.reset().addPath(path).call();
+            paths.removeAll(status.getAdded());
+            Set<String> newFiles = new LinkedHashSet<>(status.getAdded());
+            newFiles.addAll(status.getUntracked());
+            workspaceChanged = !paths.isEmpty() || !newFiles.isEmpty();
+            if (!paths.isEmpty())
+            {
+                var checkout = git.checkout().setStartPoint(Constants.HEAD);
+                paths.forEach(checkout::addPath);
+                checkout.call();
+            }
+            if (!status.getAdded().isEmpty())
+            {
+                var reset = git.reset();
+                status.getAdded().forEach(reset::addPath);
+                reset.call();
+            }
+            Path root = repository.getWorkTree().toPath().toAbsolutePath().normalize();
+            for (String path : newFiles)
+            {
+                Path file = root.resolve(path).normalize();
+                if (file.startsWith(root) && !file.equals(root)
+                    && (!Files.isDirectory(file) || Files.isSymbolicLink(file)))
+                    Files.deleteIfExists(file);
+            }
             return new OperationResult(Kind.SUCCESS,
-                "Отслеживаемые файлы возвращены к HEAD; подготовленные новые файлы сняты с подготовки, но сохранены; остальные новые файлы и конфликты не изменены.", //$NON-NLS-1$
-                !paths.isEmpty() || !status.getAdded().isEmpty());
+                "Изменённые файлы возвращены к HEAD, новые файлы удалены; конфликты не изменены.", //$NON-NLS-1$
+                workspaceChanged);
         }
-        catch (GitAPIException e)
+        catch (GitAPIException | IOException e)
         {
             return new OperationResult(Kind.ERROR, "Вернуть изменения не удалось: " + e.getMessage(), //$NON-NLS-1$
                 workspaceChanged);

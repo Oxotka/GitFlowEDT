@@ -7,6 +7,7 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
@@ -42,7 +43,9 @@ public final class GitLinks
                 }
             }
         }
-        String ref = target == Target.BRANCH ? repository.getBranch() : head.name();
+        String fullBranch = repository.getFullBranch();
+        String ref = target == Target.COMMIT || fullBranch == null || !fullBranch.startsWith(Constants.R_HEADS)
+            ? head.name() : Repository.shortenRefName(fullBranch);
         return fromRemote(remote, target, ref, path);
     }
 
@@ -76,6 +79,27 @@ public final class GitLinks
             case BRANCH -> base + "/-/tree/" + encodedRef; //$NON-NLS-1$
             case COMMIT -> base + "/-/commit/" + encodedRef; //$NON-NLS-1$
         };
+    }
+
+    public static String providerName(String remote)
+    {
+        if (remote == null || remote.isBlank())
+            return null;
+        try
+        {
+            String host = URI.create(baseUrl(remote)).getHost().toLowerCase();
+            if (host.contains("github")) //$NON-NLS-1$
+                return "GitHub"; //$NON-NLS-1$
+            if (host.contains("gitlab")) //$NON-NLS-1$
+                return "GitLab"; //$NON-NLS-1$
+            if (host.contains("bitbucket")) //$NON-NLS-1$
+                return "Bitbucket"; //$NON-NLS-1$
+        }
+        catch (IllegalArgumentException e)
+        {
+            // Show a generic label when the remote URL cannot be classified.
+        }
+        return null;
     }
 
     private static String baseUrl(String remote)

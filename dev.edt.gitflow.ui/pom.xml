@@ -7,7 +7,7 @@
   <parent>
     <groupId>dev.edt.gitflow</groupId>
     <artifactId>dev.edt.gitflow.parent</artifactId>
-    <version>0.6.6-SNAPSHOT</version>
+    <version>0.7.12-SNAPSHOT</version>
   </parent>
 
   <artifactId>dev.edt.gitflow.ui</artifactId>

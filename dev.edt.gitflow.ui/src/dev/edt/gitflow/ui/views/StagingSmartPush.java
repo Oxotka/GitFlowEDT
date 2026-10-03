@@ -32,6 +32,7 @@ import org.eclipse.ui.part.ViewPart;
 import dev.edt.gitflow.core.OperationResult;
 import dev.edt.gitflow.core.PullOperations;
 import dev.edt.gitflow.core.RepositorySupport;
+import dev.edt.gitflow.ui.handlers.NativePullLauncher;
 
 final class StagingSmartPush
 {
@@ -278,6 +279,8 @@ final class StagingSmartPush
             if (MessageDialog.openQuestion(view.getSite().getShell(), "Git Flow Ops", result.message())) //$NON-NLS-1$
                 push(view, button, repository, true, committed);
         }
+        else if (result.kind() == OperationResult.Kind.NEEDS_NATIVE_MERGE)
+            NativePullLauncher.start(repository, "Smart Push"); //$NON-NLS-1$
         else if (result.succeeded())
             view.getViewSite().getActionBars().getStatusLineManager()
                 .setMessage((committed ? "Коммит создан. " : "") + result.message()); //$NON-NLS-1$ //$NON-NLS-2$

@@ -27,6 +27,9 @@ import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Button;
 import org.eclipse.swt.widgets.Composite;
+import org.eclipse.swt.widgets.Control;
+import org.eclipse.swt.widgets.Display;
+import org.eclipse.swt.widgets.Listener;
 import org.eclipse.swt.widgets.Menu;
 import org.eclipse.swt.widgets.MenuItem;
 import org.eclipse.swt.widgets.TreeColumn;
@@ -160,6 +163,22 @@ final class BranchPicker
             tagImage.dispose();
         });
         search.addModifyListener(event -> rebuild());
+        Display display = tree.getDisplay();
+        Listener quickSearch = event ->
+        {
+            Control focus = display.getFocusControl();
+            char character = event.character;
+            if (focus != search && isInside(focus, panel) && !Character.isISOControl(character)
+                && character != 0 && (event.stateMask & (SWT.CTRL | SWT.ALT | SWT.COMMAND)) == 0)
+            {
+                search.setText(search.getText() + character);
+                search.setFocus();
+                search.setSelection(search.getText().length());
+                event.doit = false;
+            }
+        };
+        display.addFilter(SWT.KeyDown, quickSearch);
+        panel.addListener(SWT.Dispose, event -> display.removeFilter(SWT.KeyDown, quickSearch));
         search.addListener(SWT.KeyDown, event ->
         {
             if (event.keyCode == SWT.ARROW_DOWN)
@@ -249,6 +268,17 @@ final class BranchPicker
         favoriteButton.setEnabled(true);
         updateFavoriteButton();
         onSelect.accept(choice);
+    }
+
+    private static boolean isInside(Control control, Composite parent)
+    {
+        while (control != null)
+        {
+            if (control == parent)
+                return true;
+            control = control.getParent();
+        }
+        return false;
     }
 
     private void toggleFavorite()

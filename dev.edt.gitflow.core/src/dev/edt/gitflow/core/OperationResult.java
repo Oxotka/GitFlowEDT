@@ -1,17 +1,33 @@
 package dev.edt.gitflow.core;
 
-public record OperationResult(Kind kind, String message, boolean workspaceChanged, boolean commitCreated)
+import java.util.List;
+
+public record OperationResult(Kind kind, String message, boolean workspaceChanged, boolean commitCreated,
+    List<String> affectedPaths)
 {
-    public enum Kind { SUCCESS, NO_CHANGE, CONFLICT, NEEDS_CONFIRMATION, ERROR }
+    public enum Kind
+    {
+        SUCCESS, NO_CHANGE, CONFLICT, NEEDS_CONFIRMATION, NEEDS_NATIVE_MERGE, NEEDS_CHECKOUT_CLEANUP, ERROR
+    }
+
+    public OperationResult
+    {
+        affectedPaths = affectedPaths == null ? List.of() : List.copyOf(affectedPaths);
+    }
 
     public OperationResult(Kind kind, String message)
     {
-        this(kind, message, false, false);
+        this(kind, message, false, false, List.of());
     }
 
     public OperationResult(Kind kind, String message, boolean workspaceChanged)
     {
-        this(kind, message, workspaceChanged, false);
+        this(kind, message, workspaceChanged, false, List.of());
+    }
+
+    public OperationResult(Kind kind, String message, boolean workspaceChanged, boolean commitCreated)
+    {
+        this(kind, message, workspaceChanged, commitCreated, List.of());
     }
 
     public boolean succeeded()

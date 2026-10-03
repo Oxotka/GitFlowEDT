@@ -1,11 +1,15 @@
 package dev.edt.gitflow.core.tests;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 
 import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.lib.BranchConfig;
+import org.eclipse.jgit.lib.Constants;
+import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.transport.URIish;
 import org.junit.Test;
 
@@ -34,8 +38,17 @@ public class RepositoryOverviewTest
                 commit(source, seed, "remote.txt", "remote"); //$NON-NLS-1$ //$NON-NLS-2$
                 source.push().setRemote("origin").add(source.getRepository().getFullBranch()).call(); //$NON-NLS-1$
                 local.fetch().setRemote("origin").call(); //$NON-NLS-1$
+                RepositoryOverview previous = RepositoryOverview.read(local.getRepository(),
+                    WorkingChanges.read(local.getRepository()));
+                ObjectId head = local.getRepository().resolve(Constants.HEAD);
+                String tracking = new BranchConfig(local.getRepository().getConfig(),
+                    local.getRepository().getBranch()).getRemoteTrackingBranch();
+                ObjectId upstream = local.getRepository().resolve(tracking);
                 Files.writeString(work.resolve("tracked.txt"), "changed"); //$NON-NLS-1$ //$NON-NLS-2$
                 Files.writeString(work.resolve("new.txt"), "untracked"); //$NON-NLS-1$ //$NON-NLS-2$
+                assertTrue(RepositoryOverview.refsUnchanged(local.getRepository(), head, upstream));
+                assertEquals(new RepositoryOverview(2, 1, 1), RepositoryOverview.read(local.getRepository(),
+                    WorkingChanges.read(local.getRepository()), previous, head, upstream));
 
                 assertEquals(new RepositoryOverview(2, 1, 1),
                     RepositoryOverview.read(local.getRepository()));

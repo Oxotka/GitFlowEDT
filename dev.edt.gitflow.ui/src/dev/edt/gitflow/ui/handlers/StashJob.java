@@ -73,11 +73,13 @@ final class StashJob
             public void done(IJobChangeEvent changeEvent)
             {
                 if (completionMessage[0] != null)
-                    GitFlowView.publish(completionMessage[0]);
+                    GitFlowView.publishStatus(completionMessage[0], completionMessage[0].startsWith(Messages.get("error")) //$NON-NLS-1$
+                        || completionMessage[0].startsWith(Messages.get("conflicts")) //$NON-NLS-1$
+                            ? Messages.get("operationFailedShort") : Messages.get("allDone")); //$NON-NLS-1$
             }
         });
-        GitFlowView.publish(Messages.get(pop ? "popJob" : "stashJob") //$NON-NLS-1$ //$NON-NLS-2$
-            + Messages.get("operationStarted")); //$NON-NLS-1$
+        GitFlowView.publishStatus(Messages.get(pop ? "popJob" : "stashJob") //$NON-NLS-1$ //$NON-NLS-2$
+            + Messages.get("operationStarted"), pop ? "Возвращаем изменения…" : "Сохраняем изменения…"); //$NON-NLS-1$ //$NON-NLS-2$
         job.schedule();
     }
 

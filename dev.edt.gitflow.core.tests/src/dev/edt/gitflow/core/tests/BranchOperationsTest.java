@@ -39,6 +39,28 @@ public class BranchOperationsTest
     }
 
     @Test
+    public void checkoutTagDetachesHeadAndRestoresDirtyTree() throws Exception
+    {
+        Path directory = Files.createTempDirectory("gitflow-tag-checkout-"); //$NON-NLS-1$
+        try (Git git = Git.init().setDirectory(directory.toFile()).call())
+        {
+            commit(git, directory, "base\n"); //$NON-NLS-1$
+            git.tag().setName("v1.0").call(); //$NON-NLS-1$
+            ObjectId tagCommit = git.getRepository().resolve("refs/tags/v1.0^{commit}"); //$NON-NLS-1$
+            Files.writeString(directory.resolve("file.txt"), "dirty\n"); //$NON-NLS-1$ //$NON-NLS-2$
+
+            OperationResult result = BranchOperations.checkout(git.getRepository(), "refs/tags/v1.0", false, //$NON-NLS-1$
+                new NullProgressMonitor());
+
+            assertTrue(result.toString(), result.succeeded());
+            assertEquals(tagCommit, git.getRepository().resolve("HEAD")); //$NON-NLS-1$
+            assertFalse(git.getRepository().getFullBranch().startsWith("refs/heads/")); //$NON-NLS-1$
+            assertEquals("dirty\n", Files.readString(directory.resolve("file.txt"))); //$NON-NLS-1$
+            assertTrue(git.stashList().call().isEmpty());
+        }
+    }
+
+    @Test
     public void undoPublishedCommitRequiresConfirmation() throws Exception
     {
         Path directory = Files.createTempDirectory("gitflow-published-"); //$NON-NLS-1$
@@ -92,7 +114,7 @@ public class BranchOperationsTest
     }
 
     @Test
-    public void checkoutConflictKeepsStash() throws Exception
+    public void checkoutStashConflictRestoresOriginalStateBeforeCleanupPrompt() throws Exception
     {
         Path directory = Files.createTempDirectory("gitflow-checkout-conflict-"); //$NON-NLS-1$
         try (Git git = Git.init().setDirectory(directory.toFile()).call())
@@ -105,8 +127,11 @@ public class BranchOperationsTest
             Files.writeString(directory.resolve("file.txt"), "local\n"); //$NON-NLS-1$ //$NON-NLS-2$
             OperationResult result = BranchOperations.checkout(git.getRepository(), "other", false, //$NON-NLS-1$
                 new NullProgressMonitor());
-            assertEquals(OperationResult.Kind.CONFLICT, result.kind());
-            assertFalse(git.stashList().call().isEmpty());
+            assertEquals(OperationResult.Kind.NEEDS_CHECKOUT_CLEANUP, result.kind());
+            assertEquals(original, git.getRepository().getBranch());
+            assertEquals("local\n", Files.readString(directory.resolve("file.txt"))); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue(git.stashList().call().isEmpty());
+            assertTrue(result.affectedPaths().contains("file.txt")); //$NON-NLS-1$
         }
     }
 

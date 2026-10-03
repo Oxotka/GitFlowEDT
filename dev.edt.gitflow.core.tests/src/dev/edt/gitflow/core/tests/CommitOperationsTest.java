@@ -1,6 +1,7 @@
 package dev.edt.gitflow.core.tests;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
@@ -42,6 +43,51 @@ public class CommitOperationsTest
             assertEquals(git.getRepository().resolve("HEAD"), //$NON-NLS-1$
                 origin.getRepository().resolve(git.getRepository().getFullBranch()));
             assertTrue(git.status().call().getUntracked().contains("untracked.txt")); //$NON-NLS-1$
+        }
+    }
+
+    @Test
+    public void commitAndPushKeepsCommitLocalWhenSameFileChangedUpstream() throws Exception
+    {
+        Path root = Files.createTempDirectory("gitflow-commit-overlap-"); //$NON-NLS-1$
+        Path bare = root.resolve("origin.git"); //$NON-NLS-1$
+        Path seed = root.resolve("seed"); //$NON-NLS-1$
+        Path work = root.resolve("work"); //$NON-NLS-1$
+        try (Git origin = Git.init().setBare(true).setDirectory(bare.toFile()).call();
+             Git source = Git.init().setDirectory(seed.toFile()).call())
+        {
+            Files.writeString(seed.resolve("module.bsl"), "first\nsecond\nthird\nfourth\nfifth\nsixth\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            source.add().addFilepattern("module.bsl").call(); //$NON-NLS-1$
+            source.commit().setMessage("base").setAuthor("Test", "test@example.org") //$NON-NLS-1$ //$NON-NLS-2$
+                .setCommitter("Test", "test@example.org").call(); //$NON-NLS-1$ //$NON-NLS-2$
+            source.remoteAdd().setName("origin").setUri(new URIish(bare.toUri().toString())).call(); //$NON-NLS-1$
+            source.push().setRemote("origin").add(source.getRepository().getFullBranch()).call(); //$NON-NLS-1$
+            try (Git local = Git.cloneRepository().setURI(bare.toUri().toString())
+                .setDirectory(work.toFile()).call())
+            {
+                Files.writeString(work.resolve("module.bsl"), //$NON-NLS-1$
+                    "local first\nsecond\nthird\nfourth\nfifth\nsixth\n"); //$NON-NLS-1$
+                Files.writeString(seed.resolve("module.bsl"), //$NON-NLS-1$
+                    "first\nsecond\nthird\nfourth\nfifth\nremote sixth\n"); //$NON-NLS-1$
+                source.add().addFilepattern("module.bsl").call(); //$NON-NLS-1$
+                source.commit().setMessage("remote").setAuthor("Test", "test@example.org") //$NON-NLS-1$ //$NON-NLS-2$
+                    .setCommitter("Test", "test@example.org").call(); //$NON-NLS-1$ //$NON-NLS-2$
+                source.push().setRemote("origin").add(source.getRepository().getFullBranch()).call(); //$NON-NLS-1$
+
+                OperationResult result = CommitOperations.commitAndPush(local.getRepository(), "local", //$NON-NLS-1$
+                    true, true, true, new NullProgressMonitor());
+
+                assertEquals(OperationResult.Kind.NEEDS_NATIVE_MERGE, result.kind());
+                assertTrue(result.commitCreated());
+                assertFalse(result.workspaceChanged());
+                assertTrue(result.message().contains("Коммит сохранён локально")); //$NON-NLS-1$
+                assertEquals("local", local.log().setMaxCount(1).call().iterator().next().getShortMessage()); //$NON-NLS-1$
+                assertEquals(source.getRepository().resolve("HEAD"), //$NON-NLS-1$
+                    origin.getRepository().resolve("refs/heads/" + local.getRepository().getBranch())); //$NON-NLS-1$
+                assertEquals("local first\nsecond\nthird\nfourth\nfifth\nsixth\n", //$NON-NLS-1$
+                    Files.readString(work.resolve("module.bsl")));
+                assertTrue(local.stashList().call().isEmpty());
+            }
         }
     }
 

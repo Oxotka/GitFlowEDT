@@ -1,13 +1,16 @@
 package dev.edt.gitflow.core;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 
 import org.eclipse.core.runtime.IProgressMonitor;
-import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.CreateBranchCommand.SetupUpstreamMode;
+import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.ResetCommand.ResetType;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.lib.BranchConfig;
+import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
@@ -37,7 +40,9 @@ public final class BranchOperations
     {
         if (!RepositorySupport.isSafe(repository))
             return new OperationResult(Kind.ERROR, "Репозиторий занят другой Git-операцией."); //$NON-NLS-1$
-        if (!isValidBranchName(target))
+        boolean tagTarget = target != null && target.startsWith(Constants.R_TAGS);
+        if (tagTarget ? !Repository.isValidRefName(target) || create || startPoint != null
+            : !isValidBranchName(target))
             return new OperationResult(Kind.ERROR, "Некорректное имя ветки."); //$NON-NLS-1$
         String stashId = null;
         String original;
@@ -48,7 +53,7 @@ public final class BranchOperations
             original = repository.getBranch();
             if (target.equals(original))
                 return new OperationResult(Kind.NO_CHANGE, "Это уже текущая ветка."); //$NON-NLS-1$
-            ObjectId existing = repository.resolve("refs/heads/" + target); //$NON-NLS-1$
+            ObjectId existing = repository.resolve(tagTarget ? target : "refs/heads/" + target); //$NON-NLS-1$
             if (create && existing != null)
                 return new OperationResult(Kind.ERROR, "Ветка уже существует: " + target); //$NON-NLS-1$
             if (!create && existing == null)
@@ -91,8 +96,34 @@ public final class BranchOperations
                 monitor.subTask("Восстановление локальных изменений"); //$NON-NLS-1$
                 StashOperations.Result restored = StashOperations.applyAndDrop(repository, stashId);
                 if (restored.outcome() != StashOperations.Outcome.APPLIED)
+                {
+                    if (restored.outcome() == StashOperations.Outcome.CONFLICTS)
+                    {
+                        List<String> conflicts = new ArrayList<>(git.status().call().getConflicting());
+                        if (conflicts.isEmpty())
+                            conflicts.addAll(git.status().call().getModified());
+                        try
+                        {
+                            git.reset().setMode(ResetType.HARD).call();
+                            git.checkout().setName(original).call();
+                            StashOperations.Result returned = StashOperations.applyAndDrop(repository, stashId);
+                            if (returned.outcome() == StashOperations.Outcome.APPLIED)
+                                return new OperationResult(Kind.NEEDS_CHECKOUT_CLEANUP,
+                                    "Локальные изменения восстановлены в исходной ветке.", true, false, conflicts); //$NON-NLS-1$
+                            return new OperationResult(Kind.CONFLICT,
+                                "Конфликт при переключении отменён, но stash не удалось восстановить: " //$NON-NLS-1$
+                                    + returned.detail() + " Stash сохранён.", true); //$NON-NLS-1$
+                        }
+                        catch (GitAPIException rollbackError)
+                        {
+                            return new OperationResult(Kind.CONFLICT,
+                                "Не удалось завершить переключение после конфликта stash: " //$NON-NLS-1$
+                                    + rollbackError.getMessage() + " Stash сохранён: " + stashId, true); //$NON-NLS-1$
+                        }
+                    }
                     return new OperationResult(Kind.CONFLICT,
                         "Ветка переключена, но изменения остались в стеше: " + restored.detail(), true); //$NON-NLS-1$
+                }
             }
             monitor.worked(1);
             return new OperationResult(Kind.SUCCESS, "Текущая ветка: " + target, true); //$NON-NLS-1$

@@ -183,7 +183,7 @@ public class PullOperationsTest
     }
 
     @Test
-    public void keepsStashWhenRestoringAfterPullConflicts() throws Exception
+    public void stopsBeforeStashingWhenDirtyFileConflictsWithUpstream() throws Exception
     {
         Path root = Files.createTempDirectory("gitflow-pull-conflict-"); //$NON-NLS-1$
         Path bare = root.resolve("origin.git"); //$NON-NLS-1$
@@ -199,12 +199,15 @@ public class PullOperationsTest
                 .setDirectory(work.toFile()).call())
             {
                 Files.writeString(work.resolve("file.txt"), "local"); //$NON-NLS-1$ //$NON-NLS-2$
+                var head = local.getRepository().resolve("HEAD"); //$NON-NLS-1$
                 commit(source, seed, "file.txt", "remote"); //$NON-NLS-1$ //$NON-NLS-2$
                 source.push().setRemote("origin").add(source.getRepository().getFullBranch()).call(); //$NON-NLS-1$
                 OperationResult result = PullOperations.smartPull(local.getRepository(), new NullProgressMonitor());
                 assertEquals(OperationResult.Kind.CONFLICT, result.kind());
-                assertTrue(result.workspaceChanged());
-                assertFalse(local.stashList().call().isEmpty());
+                assertFalse(result.workspaceChanged());
+                assertEquals(head, local.getRepository().resolve("HEAD")); //$NON-NLS-1$
+                assertEquals("local", Files.readString(work.resolve("file.txt"))); //$NON-NLS-1$
+                assertTrue(local.stashList().call().isEmpty());
             }
         }
     }
@@ -234,6 +237,79 @@ public class PullOperationsTest
                     new NullProgressMonitor());
                 assertEquals(OperationResult.Kind.NO_CHANGE, alreadySynced.kind());
                 assertFalse(alreadySynced.workspaceChanged());
+            }
+        }
+    }
+
+    @Test
+    public void smartPushRequestsNativeMergeWhenBothSidesChangedSameFile() throws Exception
+    {
+        Path root = Files.createTempDirectory("gitflow-same-file-sync-"); //$NON-NLS-1$
+        Path bare = root.resolve("origin.git"); //$NON-NLS-1$
+        Path seed = root.resolve("seed"); //$NON-NLS-1$
+        Path work = root.resolve("work"); //$NON-NLS-1$
+        try (Git origin = Git.init().setBare(true).setDirectory(bare.toFile()).call();
+             Git source = Git.init().setDirectory(seed.toFile()).call())
+        {
+            commit(source, seed, "module.bsl", "first\nsecond\nthird\nfourth\nfifth\nsixth\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            source.remoteAdd().setName("origin").setUri(new URIish(bare.toUri().toString())).call(); //$NON-NLS-1$
+            source.push().setRemote("origin").add(source.getRepository().getFullBranch()).call(); //$NON-NLS-1$
+            try (Git local = Git.cloneRepository().setURI(bare.toUri().toString())
+                .setDirectory(work.toFile()).call())
+            {
+                commit(local, work, "module.bsl", "local first\nsecond\nthird\nfourth\nfifth\nsixth\n"); //$NON-NLS-1$ //$NON-NLS-2$
+                Files.writeString(work.resolve("other.txt"), "keep"); //$NON-NLS-1$ //$NON-NLS-2$
+                var localHead = local.getRepository().resolve("HEAD"); //$NON-NLS-1$
+                commit(source, seed, "module.bsl", "first\nsecond\nthird\nfourth\nfifth\nremote sixth\n"); //$NON-NLS-1$ //$NON-NLS-2$
+                source.push().setRemote("origin").add(source.getRepository().getFullBranch()).call(); //$NON-NLS-1$
+
+                OperationResult result = PullOperations.smartPush(local.getRepository(), new NullProgressMonitor());
+
+                assertEquals(OperationResult.Kind.NEEDS_NATIVE_MERGE, result.kind());
+                assertFalse(result.workspaceChanged());
+                assertEquals(localHead, local.getRepository().resolve("HEAD")); //$NON-NLS-1$
+                assertEquals("local first\nsecond\nthird\nfourth\nfifth\nsixth\n", //$NON-NLS-1$
+                    Files.readString(work.resolve("module.bsl")));
+                assertEquals("keep", Files.readString(work.resolve("other.txt"))); //$NON-NLS-1$
+                assertTrue(local.stashList().call().isEmpty());
+                assertFalse(result.message().isBlank());
+                assertEquals(source.getRepository().resolve("HEAD"), //$NON-NLS-1$
+                    local.getRepository().resolve("refs/remotes/origin/" + local.getRepository().getBranch())); //$NON-NLS-1$
+                assertEquals(source.getRepository().resolve("HEAD"), //$NON-NLS-1$
+                    origin.getRepository().resolve("refs/heads/" + local.getRepository().getBranch())); //$NON-NLS-1$
+            }
+        }
+    }
+
+    @Test
+    public void smartPullStopsBeforeStashingWhenDirtyFileAlsoChangedUpstream() throws Exception
+    {
+        Path root = Files.createTempDirectory("gitflow-dirty-overlap-"); //$NON-NLS-1$
+        Path bare = root.resolve("origin.git"); //$NON-NLS-1$
+        Path seed = root.resolve("seed"); //$NON-NLS-1$
+        Path work = root.resolve("work"); //$NON-NLS-1$
+        try (Git origin = Git.init().setBare(true).setDirectory(bare.toFile()).call();
+             Git source = Git.init().setDirectory(seed.toFile()).call())
+        {
+            commit(source, seed, "module.bsl", "first\nsecond\nthird\nfourth\nfifth\nsixth\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            source.remoteAdd().setName("origin").setUri(new URIish(bare.toUri().toString())).call(); //$NON-NLS-1$
+            source.push().setRemote("origin").add(source.getRepository().getFullBranch()).call(); //$NON-NLS-1$
+            try (Git local = Git.cloneRepository().setURI(bare.toUri().toString())
+                .setDirectory(work.toFile()).call())
+            {
+                String dirty = "local first\nsecond\nthird\nfourth\nfifth\nsixth\n"; //$NON-NLS-1$
+                Files.writeString(work.resolve("module.bsl"), dirty); //$NON-NLS-1$
+                var head = local.getRepository().resolve("HEAD"); //$NON-NLS-1$
+                commit(source, seed, "module.bsl", "first\nsecond\nthird\nfourth\nfifth\nremote sixth\n"); //$NON-NLS-1$ //$NON-NLS-2$
+                source.push().setRemote("origin").add(source.getRepository().getFullBranch()).call(); //$NON-NLS-1$
+
+                OperationResult result = PullOperations.smartPull(local.getRepository(), new NullProgressMonitor());
+
+                assertEquals(OperationResult.Kind.CONFLICT, result.kind());
+                assertFalse(result.workspaceChanged());
+                assertEquals(head, local.getRepository().resolve("HEAD")); //$NON-NLS-1$
+                assertEquals(dirty, Files.readString(work.resolve("module.bsl"))); //$NON-NLS-1$
+                assertTrue(local.stashList().call().isEmpty());
             }
         }
     }

@@ -69,7 +69,8 @@ final class BranchDialog extends Dialog
             String listError = null;
             try
             {
-                BranchPicker picker = new BranchPicker(fields, repository, mode == Mode.CHECKOUT, choice ->
+                BranchPicker picker = new BranchPicker(fields, repository, mode == Mode.CHECKOUT,
+                    mode == Mode.CHECKOUT, choice ->
                 {
                     if (choice == null)
                     {
@@ -130,6 +131,12 @@ final class BranchDialog extends Dialog
             : mode == Mode.COMMIT ? "commitBranchTitle" : "moveTitle")); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
+    @Override
+    protected int getShellStyle()
+    {
+        return super.getShellStyle() | SWT.RESIZE;
+    }
+
     private void setBranchText(String text)
     {
         settingBranch = true;
@@ -179,9 +186,12 @@ final class BranchDialog extends Dialog
     @Override
     protected void okPressed()
     {
-        branch = mode == Mode.CHECKOUT && selectedChoice != null ? selectedChoice.localName()
+        branch = mode == Mode.CHECKOUT && selectedChoice != null
+            ? selectedChoice.kind() == BranchPicker.Kind.TAG ? selectedChoice.ref() : selectedChoice.localName()
             : branchField == null ? "" : branchField.getText().trim(); //$NON-NLS-1$
-        if (!dev.edt.gitflow.core.BranchOperations.isValidBranchName(branch))
+        boolean tag = mode == Mode.CHECKOUT && selectedChoice != null
+            && selectedChoice.kind() == BranchPicker.Kind.TAG;
+        if (!tag && !dev.edt.gitflow.core.BranchOperations.isValidBranchName(branch))
         {
             showFeedback(Messages.get("invalidBranch")); //$NON-NLS-1$
             return;

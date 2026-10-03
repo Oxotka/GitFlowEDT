@@ -1,6 +1,7 @@
 package dev.edt.gitflow.core.tests;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import java.nio.file.Files;
@@ -93,6 +94,52 @@ public class WorkingChangesTest
     }
 
     @Test
+    public void deletesOnlyUntrackedFile() throws Exception
+    {
+        Path work = Files.createTempDirectory("gitflow-delete-untracked-"); //$NON-NLS-1$
+        try (Git git = Git.init().setDirectory(work.toFile()).call())
+        {
+            Path tracked = work.resolve("tracked.txt"); //$NON-NLS-1$
+            Path untracked = work.resolve("new.txt"); //$NON-NLS-1$
+            Files.writeString(tracked, "base"); //$NON-NLS-1$
+            git.add().addFilepattern("tracked.txt").call(); //$NON-NLS-1$
+            git.commit().setMessage("base").setAuthor("Test", "test@example.org") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                .setCommitter("Test", "test@example.org").call(); //$NON-NLS-1$ //$NON-NLS-2$
+            Files.writeString(untracked, "new"); //$NON-NLS-1$
+
+            assertTrue(WorkingChanges.deleteUntrackedFile(git.getRepository(), "new.txt").succeeded()); //$NON-NLS-1$
+            assertFalse(Files.exists(untracked));
+            assertEquals(dev.edt.gitflow.core.OperationResult.Kind.ERROR,
+                WorkingChanges.deleteUntrackedFile(git.getRepository(), "tracked.txt").kind()); //$NON-NLS-1$
+            assertEquals("base", Files.readString(tracked)); //$NON-NLS-1$
+        }
+    }
+
+    @Test
+    public void stagesAndUnstagesAllChangesInOneOperation() throws Exception
+    {
+        Path work = Files.createTempDirectory("gitflow-stage-all-"); //$NON-NLS-1$
+        try (Git git = Git.init().setDirectory(work.toFile()).call())
+        {
+            Files.writeString(work.resolve("modified.txt"), "base"); //$NON-NLS-1$ //$NON-NLS-2$
+            Files.writeString(work.resolve("deleted.txt"), "base"); //$NON-NLS-1$ //$NON-NLS-2$
+            git.add().addFilepattern(".").call(); //$NON-NLS-1$
+            git.commit().setMessage("base").setAuthor("Test", "test@example.org") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                .setCommitter("Test", "test@example.org").call(); //$NON-NLS-1$ //$NON-NLS-2$
+            Files.writeString(work.resolve("modified.txt"), "changed"); //$NON-NLS-1$ //$NON-NLS-2$
+            Files.delete(work.resolve("deleted.txt")); //$NON-NLS-1$
+            Files.writeString(work.resolve("new.txt"), "new"); //$NON-NLS-1$ //$NON-NLS-2$
+
+            assertTrue(WorkingChanges.stageAll(git.getRepository()).succeeded());
+            assertEquals(3, WorkingChanges.read(git.getRepository()).staged().size());
+            assertTrue(WorkingChanges.read(git.getRepository()).unstaged().isEmpty());
+            assertTrue(WorkingChanges.unstageAll(git.getRepository()).succeeded());
+            assertTrue(WorkingChanges.read(git.getRepository()).staged().isEmpty());
+            assertEquals(3, WorkingChanges.read(git.getRepository()).unstaged().size());
+        }
+    }
+
+    @Test
     public void resetRestoresDeletedTrackedFile() throws Exception
     {
         Path work = Files.createTempDirectory("gitflow-reset-deleted-"); //$NON-NLS-1$
@@ -112,33 +159,37 @@ public class WorkingChangesTest
     }
 
     @Test
-    public void resetAllTrackedKeepsUntrackedFilesAndUnstagesAddedFiles() throws Exception
+    public void discardAllRestoresTrackedFilesAndDeletesNewFiles() throws Exception
     {
         Path work = Files.createTempDirectory("gitflow-reset-all-"); //$NON-NLS-1$
         try (Git git = Git.init().setDirectory(work.toFile()).call())
         {
             Path tracked = work.resolve("tracked.txt"); //$NON-NLS-1$
+            Path deleted = work.resolve("deleted.txt"); //$NON-NLS-1$
             Path stagedNew = work.resolve("staged-new.txt"); //$NON-NLS-1$
             Path untracked = work.resolve("untracked.txt"); //$NON-NLS-1$
             Files.writeString(tracked, "base"); //$NON-NLS-1$
-            git.add().addFilepattern("tracked.txt").call(); //$NON-NLS-1$
+            Files.writeString(deleted, "base"); //$NON-NLS-1$
+            git.add().addFilepattern(".").call(); //$NON-NLS-1$
             git.commit().setMessage("base").setAuthor("Test", "test@example.org") //$NON-NLS-1$ //$NON-NLS-2$
                 .setCommitter("Test", "test@example.org").call(); //$NON-NLS-1$
 
             Files.writeString(tracked, "staged"); //$NON-NLS-1$
             git.add().addFilepattern("tracked.txt").call(); //$NON-NLS-1$
             Files.writeString(tracked, "unstaged"); //$NON-NLS-1$
+            Files.delete(deleted);
             Files.writeString(stagedNew, "new"); //$NON-NLS-1$
             git.add().addFilepattern("staged-new.txt").call(); //$NON-NLS-1$
             Files.writeString(untracked, "keep"); //$NON-NLS-1$
 
-            assertTrue(WorkingChanges.resetAllTrackedToHead(git.getRepository()).succeeded());
+            assertTrue(WorkingChanges.discardAllChanges(git.getRepository()).succeeded());
             assertEquals("base", Files.readString(tracked)); //$NON-NLS-1$
-            assertEquals("new", Files.readString(stagedNew)); //$NON-NLS-1$
-            assertEquals("keep", Files.readString(untracked)); //$NON-NLS-1$
+            assertEquals("base", Files.readString(deleted)); //$NON-NLS-1$
+            assertFalse(Files.exists(stagedNew));
+            assertFalse(Files.exists(untracked));
             WorkingChanges changes = WorkingChanges.read(git.getRepository());
             assertTrue(changes.staged().isEmpty());
-            assertEquals(2, changes.unstaged().size());
+            assertTrue(changes.unstaged().isEmpty());
         }
     }
 }

@@ -96,6 +96,11 @@ public final class CommitOperations
                         : " Коммит сохранён локально: отправка отключена."), //$NON-NLS-1$
                     false, true);
             OperationResult pushed = PullOperations.smartPush(repository, true, monitor);
+            if (pushed.kind() == Kind.NEEDS_NATIVE_MERGE)
+                return new OperationResult(Kind.NEEDS_NATIVE_MERGE,
+                    committed.message() + " " + pushed.message() + " Коммит сохранён локально; после проверки " //$NON-NLS-1$
+                        + "отправьте ветку отдельно.", //$NON-NLS-1$
+                    pushed.workspaceChanged(), true);
             return pushed.succeeded()
                 ? new OperationResult(Kind.SUCCESS, committed.message() + " " + pushed.message(), //$NON-NLS-1$
                     pushed.workspaceChanged(), true)

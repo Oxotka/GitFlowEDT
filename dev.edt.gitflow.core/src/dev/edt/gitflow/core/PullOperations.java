@@ -1,19 +1,31 @@
 package dev.edt.gitflow.core;
 
 import java.io.IOException;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.stream.Collectors;
 
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.RebaseResult;
+import org.eclipse.jgit.api.Status;
 import org.eclipse.jgit.api.errors.GitAPIException;
+import org.eclipse.jgit.diff.DiffEntry;
+import org.eclipse.jgit.diff.DiffFormatter;
 import org.eclipse.jgit.lib.BranchConfig;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
+import org.eclipse.jgit.revwalk.filter.RevFilter;
+import org.eclipse.jgit.treewalk.AbstractTreeIterator;
+import org.eclipse.jgit.treewalk.CanonicalTreeParser;
+import org.eclipse.jgit.treewalk.EmptyTreeIterator;
 import org.eclipse.jgit.transport.PushResult;
 import org.eclipse.jgit.transport.RefSpec;
 import org.eclipse.jgit.transport.RemoteRefUpdate;
+import org.eclipse.jgit.util.io.DisabledOutputStream;
 
 import dev.edt.gitflow.core.OperationResult.Kind;
 
@@ -109,8 +121,20 @@ public final class PullOperations
                         "Удалённая ветка актуальна; локальные изменения не затронуты."); //$NON-NLS-1$
             }
 
+            Status localStatus = git.status().call();
+            Set<String> overlaps = overlappingPaths(repository, head, upstream, localStatus);
+            if (!overlaps.isEmpty())
+            {
+                Set<String> workingOverlaps = overlappingWorkingPaths(repository, head, upstream, localStatus);
+                if (workingOverlaps.isEmpty() && diverged(repository, head, upstream))
+                    return new OperationResult(Kind.NEEDS_NATIVE_MERGE,
+                        "Локальные и удалённые коммиты меняют одни файлы. Запускается штатное слияние EDT."); //$NON-NLS-1$
+                return new OperationResult(Kind.CONFLICT,
+                    overlapMessage(workingOverlaps.isEmpty() ? overlaps : workingOverlaps));
+            }
+
             // Fetch happens before stashing, so a network error leaves the worktree untouched.
-            if (!git.status().call().isClean())
+            if (!localStatus.isClean())
             {
                 monitor.subTask("Сохранение локальных изменений"); //$NON-NLS-1$
                 RevCommit stash = git.stashCreate().setIncludeUntracked(true).call();
@@ -125,8 +149,20 @@ public final class PullOperations
             RebaseResult rebase = git.rebase().setUpstream(upstream).call();
             monitor.worked(1);
             if (!rebase.getStatus().isSuccessful())
+            {
+                git.rebase().setOperation(org.eclipse.jgit.api.RebaseCommand.Operation.ABORT).call();
+                if (stashId == null)
+                    return new OperationResult(Kind.NEEDS_NATIVE_MERGE,
+                        "Безопасный rebase не выполнен. Запускается штатное слияние EDT.", true); //$NON-NLS-1$
+                StashOperations.Result restored = StashOperations.applyAndDrop(repository, stashId);
+                if (restored.outcome() != StashOperations.Outcome.APPLIED)
+                    return new OperationResult(Kind.CONFLICT,
+                        "Rebase отменён, но локальные изменения не восстановлены: " + restored.detail() //$NON-NLS-1$
+                            + " Стеш сохранён.", true); //$NON-NLS-1$
                 return new OperationResult(Kind.CONFLICT,
-                    "Rebase остановлен: " + rebase.getStatus() + stashNote(stashId), true); //$NON-NLS-1$
+                    "Rebase отменён; локальные изменения восстановлены. Штатное слияние EDT не запускалось: " //$NON-NLS-1$
+                        + rebase.getStatus(), true);
+            }
 
             if (stashId != null)
             {
@@ -299,6 +335,110 @@ public final class PullOperations
         for (@SuppressWarnings("unused") RevCommit commit : git.log().addRange(oldId, newId).call())
             count++;
         return count;
+    }
+
+    private static Set<String> overlappingPaths(Repository repository, ObjectId head, ObjectId upstream,
+        Status localStatus) throws IOException
+    {
+        ObjectId base = mergeBase(repository, head, upstream);
+        Set<String> localPaths = changedPaths(repository, base, head);
+        localPaths.addAll(workingPaths(localStatus));
+        localPaths.retainAll(changedPaths(repository, base, upstream));
+        return localPaths;
+    }
+
+    private static Set<String> overlappingWorkingPaths(Repository repository, ObjectId head, ObjectId upstream,
+        Status localStatus) throws IOException
+    {
+        ObjectId base = mergeBase(repository, head, upstream);
+        Set<String> workingPaths = workingPaths(localStatus);
+        workingPaths.retainAll(changedPaths(repository, base, upstream));
+        return workingPaths;
+    }
+
+    private static Set<String> workingPaths(Status status)
+    {
+        Set<String> paths = new TreeSet<>();
+        addPaths(paths, status.getAdded());
+        addPaths(paths, status.getChanged());
+        addPaths(paths, status.getRemoved());
+        addPaths(paths, status.getMissing());
+        addPaths(paths, status.getModified());
+        addPaths(paths, status.getUntracked());
+        addPaths(paths, status.getConflicting());
+        return paths;
+    }
+
+    private static ObjectId mergeBase(Repository repository, ObjectId head, ObjectId upstream) throws IOException
+    {
+        if (head == null)
+            return null;
+        try (RevWalk walk = new RevWalk(repository))
+        {
+            walk.setRevFilter(RevFilter.MERGE_BASE);
+            walk.markStart(walk.parseCommit(head));
+            walk.markStart(walk.parseCommit(upstream));
+            RevCommit base = walk.next();
+            return base == null ? null : ObjectId.fromString(base.getId().name());
+        }
+    }
+
+    private static boolean diverged(Repository repository, ObjectId head, ObjectId upstream) throws IOException
+    {
+        try (RevWalk walk = new RevWalk(repository))
+        {
+            RevCommit local = walk.parseCommit(head);
+            RevCommit remote = walk.parseCommit(upstream);
+            return !walk.isMergedInto(local, remote) && !walk.isMergedInto(remote, local);
+        }
+    }
+
+    private static Set<String> changedPaths(Repository repository, ObjectId base, ObjectId tip) throws IOException
+    {
+        Set<String> paths = new TreeSet<>();
+        if (tip == null)
+            return paths;
+        try (RevWalk walk = new RevWalk(repository);
+             ObjectReader reader = repository.newObjectReader();
+             DiffFormatter diff = new DiffFormatter(DisabledOutputStream.INSTANCE))
+        {
+            AbstractTreeIterator oldTree;
+            if (base == null)
+                oldTree = new EmptyTreeIterator();
+            else
+            {
+                CanonicalTreeParser baseTree = new CanonicalTreeParser();
+                baseTree.reset(reader, walk.parseCommit(base).getTree());
+                oldTree = baseTree;
+            }
+            CanonicalTreeParser newTree = new CanonicalTreeParser();
+            newTree.reset(reader, walk.parseCommit(tip).getTree());
+            diff.setRepository(repository);
+            for (DiffEntry entry : diff.scan(oldTree, newTree))
+            {
+                if (!DiffEntry.DEV_NULL.equals(entry.getOldPath()))
+                    paths.add(entry.getOldPath());
+                if (!DiffEntry.DEV_NULL.equals(entry.getNewPath()))
+                    paths.add(entry.getNewPath());
+            }
+        }
+        return paths;
+    }
+
+    private static void addPaths(Set<String> paths, Iterable<String> added)
+    {
+        for (String path : added)
+            paths.add(path);
+    }
+
+    private static String overlapMessage(Set<String> paths)
+    {
+        String listed = paths.stream().limit(5).collect(Collectors.joining(", ")); //$NON-NLS-1$
+        if (paths.size() > 5)
+            listed += " и ещё " + (paths.size() - 5); //$NON-NLS-1$
+        return "Автоматическое получение остановлено: одинаковые файлы изменены локально и в upstream: " //$NON-NLS-1$
+            + listed + ". Локальная ветка и рабочие файлы не изменены. Сравните изменения и выполните " //$NON-NLS-1$
+            + "merge или rebase вручную."; //$NON-NLS-1$
     }
 
     private static String stashNote(String stashId)
