@@ -220,7 +220,7 @@ final class StagingSmartPush
                 try
                 {
                     result = PullOperations.smartPush(repository, confirmed, monitor);
-                    if (result.succeeded())
+                    if (result.workspaceChanged())
                     {
                         try
                         {

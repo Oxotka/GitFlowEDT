@@ -87,11 +87,11 @@ public record WorkingChanges(List<FileChange> staged, List<FileChange> unstaged)
                 return new OperationResult(Kind.ERROR,
                     "Вернуть можно только файл из последнего коммита: " + path); //$NON-NLS-1$
             Git.wrap(repository).checkout().setStartPoint(Constants.HEAD).addPath(path).call();
-            return new OperationResult(Kind.SUCCESS, "Файл возвращён к последнему коммиту: " + path); //$NON-NLS-1$
+            return new OperationResult(Kind.SUCCESS, "Файл возвращён к последнему коммиту: " + path, true); //$NON-NLS-1$
         }
         catch (GitAPIException e)
         {
-            return new OperationResult(Kind.ERROR, "Вернуть файл не удалось: " + e.getMessage()); //$NON-NLS-1$
+            return new OperationResult(Kind.ERROR, "Вернуть файл не удалось: " + e.getMessage(), true); //$NON-NLS-1$
         }
     }
 
@@ -99,6 +99,7 @@ public record WorkingChanges(List<FileChange> staged, List<FileChange> unstaged)
     {
         if (!RepositorySupport.isSafe(repository))
             return new OperationResult(Kind.ERROR, "Репозиторий занят другой Git-операцией."); //$NON-NLS-1$
+        boolean workspaceChanged = false;
         try
         {
             Git git = Git.wrap(repository);
@@ -110,16 +111,19 @@ public record WorkingChanges(List<FileChange> staged, List<FileChange> unstaged)
             paths.addAll(status.getRemoved());
             for (String path : status.getAdded())
                 paths.remove(path);
+            workspaceChanged = !paths.isEmpty();
             for (String path : paths)
                 git.checkout().setStartPoint(Constants.HEAD).addPath(path).call();
             for (String path : status.getAdded())
                 git.reset().addPath(path).call();
             return new OperationResult(Kind.SUCCESS,
-                "Отслеживаемые файлы возвращены к HEAD; подготовленные новые файлы сняты с подготовки, но сохранены; остальные новые файлы и конфликты не изменены."); //$NON-NLS-1$
+                "Отслеживаемые файлы возвращены к HEAD; подготовленные новые файлы сняты с подготовки, но сохранены; остальные новые файлы и конфликты не изменены.", //$NON-NLS-1$
+                !paths.isEmpty() || !status.getAdded().isEmpty());
         }
         catch (GitAPIException e)
         {
-            return new OperationResult(Kind.ERROR, "Вернуть изменения не удалось: " + e.getMessage()); //$NON-NLS-1$
+            return new OperationResult(Kind.ERROR, "Вернуть изменения не удалось: " + e.getMessage(), //$NON-NLS-1$
+                workspaceChanged);
         }
     }
 }

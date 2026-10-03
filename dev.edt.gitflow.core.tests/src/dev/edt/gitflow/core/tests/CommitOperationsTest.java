@@ -38,6 +38,7 @@ public class CommitOperationsTest
             var result = CommitOperations.commitAndPush(git.getRepository(), "fix", true, true, true, //$NON-NLS-1$
                 new NullProgressMonitor());
             assertTrue(result.toString(), result.succeeded());
+            assertTrue(result.commitCreated());
             assertEquals(git.getRepository().resolve("HEAD"), //$NON-NLS-1$
                 origin.getRepository().resolve(git.getRepository().getFullBranch()));
             assertTrue(git.status().call().getUntracked().contains("untracked.txt")); //$NON-NLS-1$

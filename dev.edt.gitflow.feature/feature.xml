@@ -2,7 +2,7 @@
 <feature
       id="dev.edt.gitflow.feature"
       label="Git Flow Ops"
-      version="0.4.17.qualifier"
+      version="0.6.6.qualifier"
       provider-name="Git Flow Ops Contributors">
    <description>Git operations for 1C:Enterprise Development Tools.</description>
    <plugin id="dev.edt.gitflow.core" download-size="0" install-size="0"

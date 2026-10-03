@@ -2,6 +2,7 @@ package dev.edt.gitflow.ui.views;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.URL;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -16,14 +17,19 @@ import java.util.Set;
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IResourceChangeEvent;
 import org.eclipse.core.resources.IResourceChangeListener;
+import org.eclipse.core.resources.IResourceDelta;
 import org.eclipse.core.resources.ResourcesPlugin;
+import org.eclipse.core.runtime.CoreException;
+import org.eclipse.core.runtime.IPath;
 import org.eclipse.core.runtime.IStatus;
+import org.eclipse.core.runtime.Path;
 import org.eclipse.core.runtime.Platform;
 import org.eclipse.core.runtime.Status;
 import org.eclipse.core.runtime.jobs.Job;
 import org.eclipse.core.runtime.preferences.InstanceScope;
 import org.eclipse.jface.dialogs.Dialog;
 import org.eclipse.jface.dialogs.MessageDialog;
+import org.eclipse.jface.resource.ImageDescriptor;
 import org.eclipse.jface.viewers.ISelection;
 import org.eclipse.jface.viewers.ISelectionChangedListener;
 import org.eclipse.jface.viewers.ISelectionProvider;
@@ -37,6 +43,8 @@ import org.eclipse.jgit.lib.RepositoryState;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.custom.CLabel;
 import org.eclipse.swt.custom.SashForm;
+import org.eclipse.swt.graphics.Image;
+import org.eclipse.swt.graphics.GC;
 import org.eclipse.swt.graphics.Point;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
@@ -53,6 +61,7 @@ import org.eclipse.swt.widgets.Text;
 import org.eclipse.swt.widgets.Tree;
 import org.eclipse.swt.widgets.TreeColumn;
 import org.eclipse.swt.widgets.TreeItem;
+import org.eclipse.ui.ISharedImages;
 import org.eclipse.ui.ISelectionListener;
 import org.eclipse.ui.IWorkbenchPage;
 import org.eclipse.ui.IWorkbenchPart;
@@ -89,11 +98,13 @@ public class GitFlowView extends ViewPart
     private static Repository preferredRepository;
 
     private final List<Repository> repositories = new ArrayList<>();
+    private final Map<String, Image> metadataImages = new HashMap<>();
     private final RepositorySelection selectionProvider = new RepositorySelection();
     private final ISelectionListener selectionListener = this::selectionChanged;
     private Composite container;
     private Combo repositoryCombo;
     private Button branchButton;
+    private Image branchImage;
     private Button syncButton;
     private Label countsLabel;
     private Text messageField;
@@ -109,11 +120,14 @@ public class GitFlowView extends ViewPart
     private ObjectId historyHead;
     private boolean stagedExpanded = true;
     private boolean unstagedExpanded = true;
+    private boolean hasStashedChanges;
     private String movedPath;
     private boolean movedToStaged;
     private CLabel feedbackLabel;
     private Job refreshJob;
     private boolean buildInProgress;
+    private boolean messageSplitInitialized;
+    private boolean refreshedDuringBuild;
     private int generation;
     private File displayedDirectory;
     private boolean hasRemote;
@@ -130,19 +144,59 @@ public class GitFlowView extends ViewPart
             if (type == IResourceChangeEvent.PRE_BUILD)
             {
                 buildInProgress = true;
-                ++generation;
-                if (refreshJob != null)
-                    refreshJob.cancel();
+                refreshedDuringBuild = false;
             }
             else if (type == IResourceChangeEvent.POST_BUILD)
             {
                 buildInProgress = false;
+                refreshedDuringBuild = false;
                 scheduleRefresh();
             }
-            else if (!buildInProgress)
-                scheduleRefresh();
+            else if (affectsRepositories(event.getDelta())
+                && (!buildInProgress || !refreshedDuringBuild))
+            {
+                if (buildInProgress)
+                    refreshedDuringBuild = true;
+                scheduleRefresh(REFRESH_QUICK_DELAY);
+            }
         });
     };
+
+    private boolean affectsRepositories(IResourceDelta delta)
+    {
+        if (delta == null || repositories.isEmpty())
+            return true;
+        List<IPath> roots = new ArrayList<>();
+        for (Repository repository : repositories)
+            roots.add(new Path(repository.getWorkTree().getAbsolutePath()));
+        boolean[] found = new boolean[1];
+        try
+        {
+            delta.accept(visited ->
+            {
+                if (found[0])
+                    return false;
+                IPath location = visited.getResource().getLocation();
+                if (location == null)
+                {
+                    found[0] = true;
+                    return false;
+                }
+                for (IPath root : roots)
+                    if (root.isPrefixOf(location))
+                    {
+                        found[0] = true;
+                        return false;
+                    }
+                return true;
+            });
+        }
+        catch (CoreException e)
+        {
+            return true;
+        }
+        return found[0];
+    }
 
     @Override
     public void createPartControl(Composite parent)
@@ -172,6 +226,8 @@ public class GitFlowView extends ViewPart
             if (repository != null)
                 SmartCheckoutHandler.open(getSite().getShell(), repository);
         });
+        branchImage = egitImage("icons/obj16/branch_obj.png").createImage(); //$NON-NLS-1$
+        branchButton.setImage(branchImage);
         countsLabel = new Label(header, SWT.NONE);
         countsLabel.setToolTipText(Messages.get("statusHint")); //$NON-NLS-1$
         syncButton = new Button(header, SWT.PUSH);
@@ -185,8 +241,11 @@ public class GitFlowView extends ViewPart
 
         Label messageLabel = new Label(parent, SWT.NONE);
         messageLabel.setText(Messages.get("commitMessage")); //$NON-NLS-1$
-        messageField = new Text(parent, SWT.BORDER | SWT.MULTI | SWT.WRAP | SWT.V_SCROLL);
-        GridData messageData = new GridData(SWT.FILL, SWT.CENTER, true, false);
+        SashForm messageSplit = new SashForm(parent, SWT.VERTICAL);
+        messageSplit.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
+        messageSplit.setSashWidth(4);
+        messageField = new Text(messageSplit, SWT.BORDER | SWT.MULTI | SWT.WRAP | SWT.V_SCROLL);
+        GridData messageData = new GridData(SWT.FILL, SWT.FILL, true, true);
         messageData.heightHint = messageField.getLineHeight() * 2 + 8;
         messageField.setLayoutData(messageData);
         messageField.setToolTipText(Messages.get("commitShortcutHint")); //$NON-NLS-1$
@@ -205,7 +264,13 @@ public class GitFlowView extends ViewPart
                     runPrimary();
             }
         });
-        Composite primaryRow = new Composite(parent, SWT.NONE);
+        Composite lower = new Composite(messageSplit, SWT.NONE);
+        GridLayout lowerLayout = new GridLayout(1, false);
+        lowerLayout.marginWidth = 0;
+        lowerLayout.marginHeight = 0;
+        lowerLayout.verticalSpacing = 7;
+        lower.setLayout(lowerLayout);
+        Composite primaryRow = new Composite(lower, SWT.NONE);
         primaryRow.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
         GridLayout primaryLayout = new GridLayout(2, false);
         primaryLayout.marginWidth = 0;
@@ -220,14 +285,25 @@ public class GitFlowView extends ViewPart
         settingsButton.setToolTipText(Messages.get("settings")); //$NON-NLS-1$
         settingsButton.setLayoutData(new GridData(SWT.CENTER, SWT.CENTER, false, false));
         settingsButton.addListener(SWT.Selection, event -> showSettingsMenu(settingsButton));
+        messageSplit.addListener(SWT.Resize, event ->
+        {
+            if (messageSplitInitialized)
+                return;
+            int totalHeight = messageSplit.getClientArea().height - messageSplit.getSashWidth();
+            if (totalHeight > messageData.heightHint)
+            {
+                messageSplit.setWeights(messageData.heightHint, totalHeight - messageData.heightHint);
+                messageSplitInitialized = true;
+            }
+        });
 
-        SashForm content = new SashForm(parent, SWT.VERTICAL);
+        SashForm content = new SashForm(lower, SWT.VERTICAL);
         content.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
         content.setSashWidth(4);
         changesTree = changeTree(content);
         historyPane = new RecentHistoryPane(content);
         content.setWeights(70, 30);
-        Composite footer = new Composite(parent, SWT.NONE);
+        Composite footer = new Composite(lower, SWT.NONE);
         footer.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
         GridLayout footerLayout = new GridLayout(2, false);
         footerLayout.marginWidth = 0;
@@ -270,13 +346,50 @@ public class GitFlowView extends ViewPart
                 - discard.getWidth() - action.getWidth() - 3)));
         tree.addListener(SWT.Expand, event -> rememberExpansion((TreeItem) event.item, true));
         tree.addListener(SWT.Collapse, event -> rememberExpansion((TreeItem) event.item, false));
+        tree.addListener(SWT.MeasureItem, event ->
+        {
+            if (event.index != 0 || !(event.item instanceof TreeItem item)
+                || !(item.getData() instanceof FileChange change))
+                return;
+            ChangeDisplay display = (ChangeDisplay) item.getData("display"); //$NON-NLS-1$
+            Image icon = metadataImage(display.icon());
+            int width = event.gc.textExtent(change.state() + "  ").x //$NON-NLS-1$
+                + event.gc.textExtent(display.text()).x;
+            if (icon != null)
+                width += icon.getBounds().width + 3;
+            event.width = width;
+            if (icon != null)
+                event.height = Math.max(event.height, icon.getBounds().height);
+        });
+        tree.addListener(SWT.PaintItem, event ->
+        {
+            if (event.index != 0 || !(event.item instanceof TreeItem item)
+                || !(item.getData() instanceof FileChange change))
+                return;
+            ChangeDisplay display = (ChangeDisplay) item.getData("display"); //$NON-NLS-1$
+            Image icon = metadataImage(display.icon());
+            GC gc = event.gc;
+            String state = change.state() + "  "; //$NON-NLS-1$
+            int x = event.x;
+            int textY = event.y + Math.max(0, (event.height - gc.textExtent(state).y) / 2);
+            gc.drawText(state, x, textY, SWT.DRAW_TRANSPARENT);
+            x += gc.textExtent(state).x;
+            if (icon != null)
+            {
+                gc.drawImage(icon, x, event.y + Math.max(0, (event.height - icon.getBounds().height) / 2));
+                x += icon.getBounds().width + 3;
+            }
+            gc.drawText(display.text(), x, event.y + Math.max(0,
+                (event.height - gc.textExtent(display.text()).y) / 2), SWT.DRAW_TRANSPARENT);
+            event.doit = false;
+        });
         tree.addListener(SWT.MouseMove, event ->
         {
             TreeItem item = tree.getItem(new Point(event.x, event.y));
             if (item == null)
                 tree.setToolTipText(null);
             else if (item.getBounds(1).contains(event.x, event.y)
-                && (canDiscard(item) || isChangeGroup(item) && canDiscardAllChanges()))
+                && (canDiscard(item) || canDiscardGroup(item)))
                 tree.setToolTipText(Messages.get(isChangeGroup(item)
                     ? "discardAllChanges" : "discardChanges")); //$NON-NLS-1$
             else if (item.getBounds(2).contains(event.x, event.y))
@@ -288,8 +401,7 @@ public class GitFlowView extends ViewPart
                     : staged ? "unstageFile" : "stageFile")); //$NON-NLS-1$ //$NON-NLS-2$
             }
             else
-                tree.setToolTipText(item.getData() instanceof FileChange
-                    ? Messages.get("openDiffHint") : null); //$NON-NLS-1$
+                tree.setToolTipText(null);
         });
         tree.addListener(SWT.MouseDown, event ->
         {
@@ -298,8 +410,7 @@ public class GitFlowView extends ViewPart
             TreeItem item = tree.getItem(new Point(event.x, event.y));
             if (item == null)
                 return;
-            if (item.getBounds(1).contains(event.x, event.y)
-                && isChangeGroup(item) && canDiscardAllChanges())
+            if (item.getBounds(1).contains(event.x, event.y) && canDiscardGroup(item))
                 discardAllChanges();
             else if (item.getBounds(1).contains(event.x, event.y) && canDiscard(item))
                 discardFile((FileChange) item.getData());
@@ -328,7 +439,8 @@ public class GitFlowView extends ViewPart
             if (item == null && tree.getSelectionCount() > 0)
                 item = tree.getSelection()[0];
             if (item == null || item.getData() instanceof Boolean && item.getItemCount() == 0
-                && !(isChangeGroup(item) && (canDiscardAllChanges() || hasChanges())))
+                && !(isChangeGroup(item) && (canDiscardGroup(item) || hasChanges()
+                    || hasStashedChanges)))
                 event.doit = false;
             else
                 tree.setSelection(item);
@@ -345,7 +457,7 @@ public class GitFlowView extends ViewPart
             if (item.getData() instanceof Boolean staged)
             {
                 boolean added = false;
-                if (canDiscardAllChanges())
+                if (!staged && canDiscardGroup(false))
                 {
                     menuItem(menu, Messages.get("discardAllChanges"), this::discardAllChanges) //$NON-NLS-1$
                         .setEnabled(!busy);
@@ -366,6 +478,13 @@ public class GitFlowView extends ViewPart
                     menuItem(menu, Messages.get("hideAllChanges"), this::hideChanges) //$NON-NLS-1$
                         .setEnabled(!busy);
                 }
+                else if (hasStashedChanges)
+                {
+                    if (added)
+                        new MenuItem(menu, SWT.SEPARATOR);
+                    menuItem(menu, Messages.get("restoreLastStash"), this::restoreLastStash) //$NON-NLS-1$
+                        .setEnabled(!busy);
+                }
             }
             else if (item.getData() instanceof FileChange change)
             {
@@ -382,7 +501,7 @@ public class GitFlowView extends ViewPart
                         && "A".equals(entry.state()))); //$NON-NLS-1$
                 new MenuItem(menu, SWT.SEPARATOR);
                 boolean added = false;
-                if (canDiscard(item))
+                if (!staged && canDiscard(item))
                 {
                     menuItem(menu, Messages.get("discardChanges"), //$NON-NLS-1$
                         () -> discardFile(change)).setEnabled(!busy);
@@ -390,10 +509,6 @@ public class GitFlowView extends ViewPart
                 }
                 menuItem(menu, Messages.get(staged ? "unstageFile" : "stageFile"), //$NON-NLS-1$ //$NON-NLS-2$
                     () -> changeFile(change.path(), staged)).setEnabled(!busy);
-                if (added)
-                    new MenuItem(menu, SWT.SEPARATOR);
-                menuItem(menu, Messages.get("hideChanges"), this::hideChanges) //$NON-NLS-1$
-                    .setEnabled(!busy);
             }
         });
         return tree;
@@ -429,7 +544,8 @@ public class GitFlowView extends ViewPart
 
     private boolean canDiscard(TreeItem item)
     {
-        return item.getData() instanceof FileChange change && canDiscard(change);
+        return item.getData() instanceof FileChange change
+            && !Boolean.TRUE.equals(item.getParentItem().getData()) && canDiscard(change);
     }
 
     private boolean canDiscard(FileChange change)
@@ -451,11 +567,20 @@ public class GitFlowView extends ViewPart
 
     private boolean canDiscardAllChanges()
     {
-        for (FileChange change : changes.staged())
-            if ("M".equals(change.state()) || "D".equals(change.state()) || "A".equals(change.state())) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-                return true;
-        for (FileChange change : changes.unstaged())
-            if ("M".equals(change.state()) || "D".equals(change.state())) //$NON-NLS-1$ //$NON-NLS-2$
+        return canDiscardGroup(true) || canDiscardGroup(false);
+    }
+
+    private boolean canDiscardGroup(TreeItem item)
+    {
+        return item.getData() instanceof Boolean staged && !staged && canDiscardGroup(false);
+    }
+
+    private boolean canDiscardGroup(boolean staged)
+    {
+        List<FileChange> files = staged ? changes.staged() : changes.unstaged();
+        for (FileChange change : files)
+            if ("M".equals(change.state()) || "D".equals(change.state()) //$NON-NLS-1$ //$NON-NLS-2$
+                || staged && "A".equals(change.state())) //$NON-NLS-1$
                 return true;
         return false;
     }
@@ -612,6 +737,7 @@ public class GitFlowView extends ViewPart
             displayedDirectory = directory;
             overview = new RepositoryOverview(0, -1, -1);
             changes = new WorkingChanges(List.of(), List.of());
+            hasStashedChanges = false;
             historyHead = null;
             historyPane.setCommits(List.of());
             movedPath = null;
@@ -644,13 +770,21 @@ public class GitFlowView extends ViewPart
         scheduleRefresh();
     }
 
+    private static final long REFRESH_DELAY = 300;
+    private static final long REFRESH_QUICK_DELAY = 100;
+
     private void scheduleRefresh()
+    {
+        scheduleRefresh(REFRESH_DELAY);
+    }
+
+    private void scheduleRefresh(long delay)
     {
         if (refreshJob != null)
             refreshJob.cancel();
         int current = ++generation;
         Repository repository = selectedRepository();
-        if (buildInProgress || repository == null || RUNNING.containsKey(repository.getDirectory()))
+        if (repository == null || RUNNING.containsKey(repository.getDirectory()))
             return;
         ObjectId displayedHead = historyHead;
         refreshJob = new Job(Messages.get("statusReading")) //$NON-NLS-1$
@@ -661,6 +795,7 @@ public class GitFlowView extends ViewPart
                 try
                 {
                     WorkingChanges latestChanges = WorkingChanges.read(repository);
+                    boolean latestHasStashedChanges = StashOperations.hasStash(repository);
                     RepositoryOverview latestOverview = RepositoryOverview.read(repository, latestChanges);
                     RepositoryState latestState = repository.getRepositoryState();
                     String mergeMessage = latestState == RepositoryState.MERGING_RESOLVED
@@ -673,6 +808,7 @@ public class GitFlowView extends ViewPart
                         if (instance == GitFlowView.this && current == generation)
                         {
                             changes = latestChanges;
+                            hasStashedChanges = latestHasStashedChanges;
                             overview = latestOverview;
                             updateMergeMessage(latestState, mergeMessage);
                             if (latestHistory != null)
@@ -697,7 +833,7 @@ public class GitFlowView extends ViewPart
             }
         };
         refreshJob.setSystem(true);
-        refreshJob.schedule(300);
+        refreshJob.schedule(delay);
     }
 
     private void updateMergeMessage(RepositoryState state, String mergeMessage)
@@ -784,21 +920,268 @@ public class GitFlowView extends ViewPart
         TreeItem group = new TreeItem(changesTree, SWT.NONE);
         group.setText(new String[] {
             Messages.get(staged ? "stagedChanges" : "unstagedChanges") + " · " + files.size(), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            canDiscardAllChanges() ? "↶" : "", //$NON-NLS-1$ //$NON-NLS-2$
+            !staged && canDiscardGroup(false) ? "↶" : "", //$NON-NLS-1$ //$NON-NLS-2$
             files.isEmpty() ? "" : staged ? "−" : "+"}); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         group.setData(staged);
         for (FileChange change : files)
         {
             TreeItem item = new TreeItem(group, SWT.NONE);
-            item.setText(new String[] {change.state() + "  " + change.path(),
-                canDiscard(change)
+            ChangeDisplay display = displayChangePath(change.path());
+            // The first column is owner-drawn below; leaving its native text populated
+            // makes SWT paint the same label a second time on some platforms.
+            item.setText(new String[] {"",
+                !staged && canDiscard(change)
                     ? "↶" : "", staged ? "−" : "+"}); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            item.setData("display", display); //$NON-NLS-1$
             item.setData(change);
             if (staged == selectedStaged && change.path().equals(selectedPath))
                 moved = item;
         }
         group.setExpanded(expanded);
         return moved;
+    }
+
+    private record ChangeDisplay(String text, String icon)
+    {
+    }
+
+    private ChangeDisplay displayChangePath(String path)
+    {
+        String relative = path.replace('\\', '/'); //$NON-NLS-1$
+        if (relative.startsWith("bp3/src/")) //$NON-NLS-1$
+            relative = relative.substring("bp3/src/".length()); //$NON-NLS-1$
+        else if (relative.startsWith("src/")) //$NON-NLS-1$
+            relative = relative.substring("src/".length()); //$NON-NLS-1$
+
+        if ("Configuration.xml".equals(relative)) //$NON-NLS-1$
+            return namedChange("Configuration", "metadataConfiguration", "configuration"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+        String[] parts = relative.split("/"); //$NON-NLS-1$
+        if (parts.length < 2)
+            return new ChangeDisplay(relative, null);
+
+        String objectType = metadataTypeKey(parts[0]);
+        if (objectType == null || parts.length < 2)
+            return new ChangeDisplay(relative, null);
+
+        String objectName = parts[1];
+        String fileName = parts[parts.length - 1];
+        String icon = metadataIconName(parts[0]);
+        if ("CommonModules".equals(parts[0]) && parts.length >= 3) //$NON-NLS-1$
+            return componentChange(objectName, "partModule", objectType, icon); //$NON-NLS-1$
+        if ("Roles".equals(parts[0]) && "Rights.xml".equals(fileName) && parts.length >= 3) //$NON-NLS-1$ //$NON-NLS-2$
+            return namedChange(objectName, objectType, icon);
+
+        int forms = -1;
+        for (int i = 2; i < parts.length; i++)
+            if ("Forms".equals(parts[i])) //$NON-NLS-1$
+            {
+                forms = i;
+                break;
+            }
+        boolean formModule = forms >= 0 && forms + 1 < parts.length && "Module.bsl".equals(fileName) //$NON-NLS-1$
+            && containsPath(parts, "Ext", "Form", "Module.bsl"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        boolean formDefinition = forms >= 0 && (forms + 1 == parts.length - 1 && fileName.endsWith(".xml") //$NON-NLS-1$
+            || containsPath(parts, "Ext", "Form.xml")); //$NON-NLS-1$ //$NON-NLS-2$
+        if (formModule || formDefinition)
+        {
+            String formIcon = metadataImage("form") == null ? null : "form"; //$NON-NLS-1$
+            return componentChange(objectName + " — " + Messages.get("partForm") + " " //$NON-NLS-1$ //$NON-NLS-2$
+                + stripExtension(parts[forms + 1]), "", objectType, formIcon); //$NON-NLS-1$
+        }
+        if ("ManagerModule.bsl".equals(fileName)) //$NON-NLS-1$
+            return componentChange(objectName, "partManagerModule", objectType, icon); //$NON-NLS-1$
+        if ("ObjectModule.bsl".equals(fileName)) //$NON-NLS-1$
+            return componentChange(objectName, "partObjectModule", objectType, icon); //$NON-NLS-1$
+        if ("RecordSetModule.bsl".equals(fileName)) //$NON-NLS-1$
+            return componentChange(objectName, "partRecordSetModule", objectType, icon); //$NON-NLS-1$
+        if ("ValueManagerModule.bsl".equals(fileName)) //$NON-NLS-1$
+            return componentChange(objectName, "partValueManagerModule", objectType, icon); //$NON-NLS-1$
+        if ("Module.bsl".equals(fileName) //$NON-NLS-1$
+            && ("metadataCommonModule".equals(objectType) || "metadataCommonForm".equals(objectType) //$NON-NLS-1$ //$NON-NLS-2$
+                || "metadataHttpService".equals(objectType) || "metadataWebService".equals(objectType)) //$NON-NLS-1$ //$NON-NLS-2$
+            )
+            return componentChange(objectName, "partModule", objectType, icon); //$NON-NLS-1$
+        if ("metadataCommonForm".equals(objectType) && "Form.xml".equals(fileName) //$NON-NLS-1$ //$NON-NLS-2$
+            && containsPath(parts, "Ext", "Form.xml")) //$NON-NLS-1$ //$NON-NLS-2$
+            return namedChange(objectName, objectType, icon);
+        if (parts.length == 2 && fileName.endsWith(".xml")) //$NON-NLS-1$
+            return namedChange(stripExtension(objectName), objectType, icon);
+        // Files nested under a metadata object (templates, commands, layouts, etc.)
+        // still belong to that object. Showing the repository path exposes folders
+        // such as Catalogs and makes otherwise recognized metadata look inconsistent.
+        return namedChange(objectName, objectType, icon);
+    }
+
+    private ChangeDisplay namedChange(String name, String typeKey, String icon)
+    {
+        String usableIcon = metadataImage(icon) == null ? null : icon;
+        return new ChangeDisplay(usableIcon == null ? name + " " + Messages.get(typeKey) : name, usableIcon);
+    }
+
+    private ChangeDisplay componentChange(String name, String componentKey, String typeKey, String icon)
+    {
+        String usableIcon = metadataImage(icon) == null ? null : icon;
+        String label = componentKey.isEmpty() ? name : name + " — " + Messages.get(componentKey); //$NON-NLS-1$
+        if (usableIcon == null)
+            label += " " + Messages.get(typeKey); //$NON-NLS-1$
+        return new ChangeDisplay(label, usableIcon);
+    }
+
+    private static String stripExtension(String name)
+    {
+        int extension = name.lastIndexOf('.'); //$NON-NLS-1$
+        return extension < 0 ? name : name.substring(0, extension);
+    }
+
+    private Image metadataImage(String name)
+    {
+        if (name == null)
+            return null;
+        Image cached = metadataImages.get(name);
+        if (cached != null && !cached.isDisposed())
+            return cached;
+        var bundle = Platform.getBundle("com._1c.g5.v8.dt.md.ui.shared"); //$NON-NLS-1$
+        URL entry = bundle == null ? null : bundle.getEntry("icons/obj16/" + name + ".png"); //$NON-NLS-1$
+        if (entry == null)
+            return null;
+        Image image = ImageDescriptor.createFromURL(entry).createImage();
+        metadataImages.put(name, image);
+        return image;
+    }
+
+    private static boolean containsPath(String[] parts, String... expected)
+    {
+        if (parts.length < expected.length)
+            return false;
+        for (int start = 0; start <= parts.length - expected.length; start++)
+        {
+            boolean match = true;
+            for (int i = 0; i < expected.length; i++)
+                if (!expected[i].equals(parts[start + i]))
+                {
+                    match = false;
+                    break;
+                }
+            if (match)
+                return true;
+        }
+        return false;
+    }
+
+    private static String metadataTypeKey(String folder)
+    {
+        return switch (folder)
+        {
+            case "AccountingRegisters" -> "metadataAccountingRegister"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "AccumulationRegisters" -> "metadataAccumulationRegister"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "BusinessProcesses" -> "metadataBusinessProcess"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "Bots" -> "metadataBot"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "Catalogs" -> "metadataCatalog"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "ChartsOfAccounts" -> "metadataChartOfAccounts"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "ChartsOfCalculationTypes" -> "metadataChartOfCalculationTypes"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "ChartsOfCharacteristicTypes" -> "metadataChartOfCharacteristicTypes"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "CommandGroups" -> "metadataCommandGroup"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "CommonAttributes" -> "metadataCommonAttribute"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "CommonCommands" -> "metadataCommonCommand"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "CommonForms" -> "metadataCommonForm"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "CommonModules" -> "metadataCommonModule"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "CommonPictures" -> "metadataCommonPicture"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "CommonTemplates" -> "metadataCommonTemplate"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "Constants" -> "metadataConstant"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "Configuration" -> "metadataConfiguration"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "DataProcessors" -> "metadataDataProcessor"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "DefinedTypes" -> "metadataDefinedType"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "DocumentJournals" -> "metadataDocumentJournal"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "DocumentNumerators" -> "metadataDocumentNumerator"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "Documents" -> "metadataDocument"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "Enums" -> "metadataEnum"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "EventSubscriptions" -> "metadataEventSubscription"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "ExchangePlans" -> "metadataExchangePlan"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "ExternalDataSources" -> "metadataExternalDataSource"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "FilterCriteria" -> "metadataFilterCriterion"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "FunctionalOptions" -> "metadataFunctionalOption"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "FunctionalOptionsParameters" -> "metadataFunctionalOptionParameter"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "HTTPServices" -> "metadataHttpService"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "InformationRegisters" -> "metadataInformationRegister"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "IntegrationServices" -> "metadataIntegrationService"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "Languages" -> "metadataLanguage"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "Roles" -> "metadataRole"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "ScheduledJobs" -> "metadataScheduledJob"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "Sequences" -> "metadataSequence"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "Servers" -> "metadataServer"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "SessionParameters" -> "metadataSessionParameter"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "SettingsStorages" -> "metadataSettingsStorage"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "StyleItems" -> "metadataStyleItem"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "Styles" -> "metadataStyle"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "Subsystems" -> "metadataSubsystem"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "Tasks" -> "metadataTask"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "PaletteColors" -> "metadataPaletteColor"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "XDTOPackages" -> "metadataXdtoPackage"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "WebServices" -> "metadataWebService"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "WebSocketClients" -> "metadataWebSocketClient"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "WSReferences" -> "metadataWsReference"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "Reports" -> "metadataReport"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "CalculationRegisters" -> "metadataCalculationRegister"; //$NON-NLS-1$ //$NON-NLS-2$
+            default -> null;
+        };
+    }
+
+    private static String metadataIconName(String folder)
+    {
+        return switch (folder)
+        {
+            case "AccountingRegisters" -> "accounting_register"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "AccumulationRegisters" -> "accumulation_register"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "BusinessProcesses" -> "business_process"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "Bots" -> "bot"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "Catalogs" -> "catalog"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "ChartsOfAccounts" -> "chart_of_accounts"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "ChartsOfCalculationTypes" -> "chart_of_calculation_types"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "ChartsOfCharacteristicTypes" -> "chart_of_characteristic_types"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "CommandGroups" -> "command_group"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "CommonAttributes" -> "common_attribute"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "CommonCommands" -> "common_command"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "CommonForms" -> "common_form"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "CommonModules" -> "common_module"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "CommonPictures" -> "common_picture"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "CommonTemplates" -> "common_template"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "Configuration" -> "configuration"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "Constants" -> "constant"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "DataProcessors" -> "data_processor"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "DefinedTypes" -> "defined_type"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "DocumentJournals" -> "document_journal"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "DocumentNumerators" -> "document_numerator"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "Documents" -> "document"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "Enums" -> "enum"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "EventSubscriptions" -> "event_subscription"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "ExchangePlans" -> "exchange_plan"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "ExternalDataSources" -> "external_data_source"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "FilterCriteria" -> "filter_criterion"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "FunctionalOptions" -> "functional_option"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "FunctionalOptionsParameters" -> "functional_option_parameter"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "HTTPServices" -> "http"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "InformationRegisters" -> "information_register"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "IntegrationServices" -> "integration_service"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "Languages" -> "language"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "PaletteColors" -> "palette_color"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "Reports" -> "report"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "Roles" -> "role"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "ScheduledJobs" -> "scheduled_job"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "Sequences" -> "sequence"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "SessionParameters" -> "session_parameter"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "SettingsStorages" -> "settings_storage"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "StyleItems" -> "style_item"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "Styles" -> "style"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "Subsystems" -> "subsystem"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "Tasks" -> "task"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "XDTOPackages" -> "xdto_package"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "WebServices" -> "web_service"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "WebSocketClients" -> "web_socket_client"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "WSReferences" -> "ws_reference"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "CalculationRegisters" -> "calculation_register"; //$NON-NLS-1$ //$NON-NLS-2$
+            default -> null;
+        };
     }
 
     private void updatePrimary()
@@ -818,8 +1201,18 @@ public class GitFlowView extends ViewPart
         }
         else
         {
-            primaryButton.setText(Messages.get("upToDate")); //$NON-NLS-1$
-            primaryButton.setEnabled(false);
+            String syncAction = syncActionText();
+            if (syncAction != null)
+            {
+                primaryButton.setText(syncAction);
+                primaryButton.setEnabled(repository != null && hasRemote && !busy
+                    && repositoryState == RepositoryState.SAFE);
+            }
+            else
+            {
+                primaryButton.setText(Messages.get("upToDate")); //$NON-NLS-1$
+                primaryButton.setEnabled(false);
+            }
         }
         countsLabel.setText(overview.incoming() < 0 ? "" //$NON-NLS-1$
             : "↓" + overview.incoming() + " ↑" + overview.outgoing()); //$NON-NLS-1$ //$NON-NLS-2$
@@ -843,26 +1236,20 @@ public class GitFlowView extends ViewPart
 
     private String syncButtonText()
     {
-        String action;
-        String counts = ""; //$NON-NLS-1$
+        String action = syncActionText();
+        return action == null ? "⟳" : "⟳ " + action; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    private String syncActionText()
+    {
         if (overview.incoming() > 0 && overview.outgoing() == 0)
-        {
-            action = Messages.get("syncPullAction"); //$NON-NLS-1$
-            counts = " " + overview.incoming() + "↓"; //$NON-NLS-1$ //$NON-NLS-2$
-        }
-        else if (overview.outgoing() > 0 && overview.incoming() == 0)
-        {
-            action = Messages.get("syncPushAction"); //$NON-NLS-1$
-            counts = " " + overview.outgoing() + "↑"; //$NON-NLS-1$ //$NON-NLS-2$
-        }
-        else if (overview.incoming() > 0 && overview.outgoing() > 0)
-        {
-            action = Messages.get("syncBothAction"); //$NON-NLS-1$
-            counts = " " + overview.incoming() + "↓ " + overview.outgoing() + "↑"; //$NON-NLS-1$ //$NON-NLS-2$
-        }
-        else
-            action = Messages.get("syncIdleAction"); //$NON-NLS-1$
-        return "⟳ " + action + counts; //$NON-NLS-1$
+            return Messages.get("syncPullAction") + " " + overview.incoming() + "↓"; //$NON-NLS-1$ //$NON-NLS-2$
+        if (overview.outgoing() > 0 && overview.incoming() == 0)
+            return Messages.get("syncPushAction") + " " + overview.outgoing() + "↑"; //$NON-NLS-1$ //$NON-NLS-2$
+        if (overview.incoming() > 0 && overview.outgoing() > 0)
+            return Messages.get("syncBothAction") + " " + overview.incoming() + "↓ " //$NON-NLS-1$ //$NON-NLS-2$
+                + overview.outgoing() + "↑"; //$NON-NLS-1$
+        return null;
     }
 
     private void runAdaptiveSync()
@@ -923,7 +1310,17 @@ public class GitFlowView extends ViewPart
             (selected, monitor) -> CommitOperations.commitAndPush(selected, message,
                 stageTracked, send, false, monitor),
             (selected, monitor) -> CommitOperations.commitAndPush(selected, message,
-                stageTracked, send, true, monitor));
+                stageTracked, send, true, monitor), true, result ->
+            {
+                if (result.commitCreated() && !messageField.isDisposed())
+                {
+                    autoFilledMergeMessage = null;
+                    mergeMessageEdited = false;
+                    settingMergeMessage = true;
+                    messageField.setText(""); //$NON-NLS-1$
+                    settingMergeMessage = false;
+                }
+            });
     }
 
     private void runSync()
@@ -963,7 +1360,7 @@ public class GitFlowView extends ViewPart
             OperationJob.schedule(repository, getSite().getShell(),
                 Messages.get(staged ? "unstageFile" : "stageFile"), //$NON-NLS-1$ //$NON-NLS-2$
                 (selected, monitor) -> staged ? WorkingChanges.unstage(selected, path)
-                    : WorkingChanges.stage(selected, path), null);
+                    : WorkingChanges.stage(selected, path), null, false);
         }
     }
 
@@ -1042,7 +1439,7 @@ public class GitFlowView extends ViewPart
         Repository repository = selectedRepository();
         if (repository == null || isRunning(repository))
             return;
-        OperationJob.schedule(repository, getSite().getShell(), Messages.get("hideChanges"), //$NON-NLS-1$
+        OperationJob.schedule(repository, getSite().getShell(), Messages.get("hideAllChanges"), //$NON-NLS-1$
             (selected, monitor) ->
             {
                 if (!RepositorySupport.isSafe(selected))
@@ -1051,11 +1448,40 @@ public class GitFlowView extends ViewPart
                 return switch (result.outcome())
                 {
                     case CREATED -> new OperationResult(OperationResult.Kind.SUCCESS,
-                        Messages.get("created") + result.detail() + Messages.get("createdEnd")); //$NON-NLS-1$ //$NON-NLS-2$
+                        Messages.get("created") + result.detail() + Messages.get("createdEnd"), true); //$NON-NLS-1$ //$NON-NLS-2$
                     case NO_CHANGES -> new OperationResult(OperationResult.Kind.NO_CHANGE,
                         Messages.get("noChanges")); //$NON-NLS-1$
                     case APPLIED, NOT_FOUND, CONFLICTS, ERROR ->
                         new OperationResult(OperationResult.Kind.ERROR, result.detail());
+                };
+            }, null);
+    }
+
+    private void restoreLastStash()
+    {
+        Repository repository = selectedRepository();
+        if (repository == null || isRunning(repository))
+            return;
+        OperationJob.schedule(repository, getSite().getShell(), Messages.get("restoreLastStash"), //$NON-NLS-1$
+            (selected, monitor) ->
+            {
+                if (!RepositorySupport.isSafe(selected))
+                    return new OperationResult(OperationResult.Kind.ERROR, Messages.get("busy")); //$NON-NLS-1$
+                StashOperations.Result result = StashOperations.quickPop(selected, monitor);
+                return switch (result.outcome())
+                {
+                    case APPLIED -> new OperationResult(OperationResult.Kind.SUCCESS,
+                        Messages.get("applied"), true); //$NON-NLS-1$
+                    case CONFLICTS -> new OperationResult(OperationResult.Kind.CONFLICT,
+                        Messages.get("conflicts") + result.detail(), true); //$NON-NLS-1$
+                    case ERROR -> new OperationResult(OperationResult.Kind.ERROR,
+                        Messages.get("error") + result.detail(), true); //$NON-NLS-1$
+                    case NOT_FOUND -> new OperationResult(OperationResult.Kind.NO_CHANGE,
+                        Messages.get("notFound")); //$NON-NLS-1$
+                    case NO_CHANGES -> new OperationResult(OperationResult.Kind.NO_CHANGE,
+                        Messages.get("noChanges")); //$NON-NLS-1$
+                    case CREATED -> new OperationResult(OperationResult.Kind.ERROR,
+                        result.detail());
                 };
             }, null);
     }
@@ -1088,7 +1514,7 @@ public class GitFlowView extends ViewPart
                 return new dev.edt.gitflow.core.OperationResult(
                     dev.edt.gitflow.core.OperationResult.Kind.SUCCESS,
                     (staged ? "Убрано из коммита: " : "Подготовлено: ") + files.size()); //$NON-NLS-1$ //$NON-NLS-2$
-            }, null);
+            }, null, false);
     }
 
     private void optimisticMove(List<FileChange> files, boolean staged)
@@ -1174,8 +1600,25 @@ public class GitFlowView extends ViewPart
         ResourcesPlugin.getWorkspace().removeResourceChangeListener(resourceListener);
         if (refreshJob != null)
             refreshJob.cancel();
+        if (branchImage != null && !branchImage.isDisposed())
+            branchImage.dispose();
+        metadataImages.values().forEach(image ->
+        {
+            if (!image.isDisposed())
+                image.dispose();
+        });
+        metadataImages.clear();
         instance = null;
         super.dispose();
+    }
+
+    private static ImageDescriptor egitImage(String path)
+    {
+        var bundle = Platform.getBundle("org.eclipse.egit.ui"); //$NON-NLS-1$
+        URL entry = bundle == null ? null : bundle.getEntry(path);
+        if (entry != null)
+            return ImageDescriptor.createFromURL(entry);
+        return PlatformUI.getWorkbench().getSharedImages().getImageDescriptor(ISharedImages.IMG_OBJ_ELEMENT);
     }
 
     public static void useRepository(Repository repository)

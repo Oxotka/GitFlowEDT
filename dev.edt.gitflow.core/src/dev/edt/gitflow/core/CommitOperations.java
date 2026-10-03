@@ -58,7 +58,7 @@ public final class CommitOperations
                 return new OperationResult(Kind.ERROR, "Нет подготовленных отслеживаемых изменений."); //$NON-NLS-1$
             git.commit().setMessage(message).call();
             monitor.worked(1);
-            return new OperationResult(Kind.SUCCESS, "Коммит создан в ветке " + branch + "."); //$NON-NLS-1$ //$NON-NLS-2$
+            return new OperationResult(Kind.SUCCESS, "Коммит создан в ветке " + branch + ".", false, true); //$NON-NLS-1$ //$NON-NLS-2$
         }
         catch (GitAPIException | IOException e)
         {
@@ -93,13 +93,15 @@ public final class CommitOperations
             if (!send || !hasRemote)
                 return new OperationResult(Kind.SUCCESS,
                     committed.message() + (send ? " Коммит сохранён локально: remote не настроен." //$NON-NLS-1$
-                        : " Коммит сохранён локально: отправка отключена.")); //$NON-NLS-1$
+                        : " Коммит сохранён локально: отправка отключена."), //$NON-NLS-1$
+                    false, true);
             OperationResult pushed = PullOperations.smartPush(repository, true, monitor);
             return pushed.succeeded()
-                ? new OperationResult(Kind.SUCCESS, committed.message() + " " + pushed.message()) //$NON-NLS-1$
+                ? new OperationResult(Kind.SUCCESS, committed.message() + " " + pushed.message(), //$NON-NLS-1$
+                    pushed.workspaceChanged(), true)
                 : new OperationResult(Kind.ERROR,
                     committed.message() + " Коммит остался локально. Отправка не завершена: " //$NON-NLS-1$
-                        + pushed.message());
+                        + pushed.message(), pushed.workspaceChanged(), true);
         }
         catch (IOException e)
         {

@@ -81,6 +81,7 @@ public final class PullOperations
             return new OperationResult(Kind.ERROR, e.getMessage());
         }
         String stashId = null;
+        boolean workspaceChanged = false;
         monitor.beginTask("Умное получение", 4); //$NON-NLS-1$
         try
         {
@@ -116,14 +117,16 @@ public final class PullOperations
                 if (stash == null)
                     return new OperationResult(Kind.ERROR, "Не удалось сохранить локальные изменения."); //$NON-NLS-1$
                 stashId = stash.getId().name();
+                workspaceChanged = true;
             }
             monitor.worked(1);
             monitor.subTask("Обновление ветки"); //$NON-NLS-1$
+            workspaceChanged = true;
             RebaseResult rebase = git.rebase().setUpstream(upstream).call();
             monitor.worked(1);
             if (!rebase.getStatus().isSuccessful())
                 return new OperationResult(Kind.CONFLICT,
-                    "Rebase остановлен: " + rebase.getStatus() + stashNote(stashId)); //$NON-NLS-1$
+                    "Rebase остановлен: " + rebase.getStatus() + stashNote(stashId), true); //$NON-NLS-1$
 
             if (stashId != null)
             {
@@ -132,17 +135,18 @@ public final class PullOperations
                 if (restored.outcome() != StashOperations.Outcome.APPLIED)
                     return new OperationResult(Kind.CONFLICT,
                         "Обновление прошло, но локальные изменения не восстановлены: " //$NON-NLS-1$
-                            + restored.detail() + " Стеш сохранён."); //$NON-NLS-1$
+                            + restored.detail() + " Стеш сохранён.", true); //$NON-NLS-1$
             }
             monitor.worked(1);
             return fetched == 0
-                ? new OperationResult(Kind.NO_CHANGE, "Ветка актуальна, локальные изменения восстановлены.") //$NON-NLS-1$
+                ? new OperationResult(Kind.NO_CHANGE, "Ветка актуальна, локальные изменения восстановлены.", //$NON-NLS-1$
+                    workspaceChanged)
                 : new OperationResult(Kind.SUCCESS, "Получено коммитов: " + fetched //$NON-NLS-1$
-                    + ". Локальные изменения восстановлены."); //$NON-NLS-1$
+                    + ". Локальные изменения восстановлены.", workspaceChanged); //$NON-NLS-1$
         }
         catch (GitAPIException | IOException e)
         {
-            return new OperationResult(Kind.ERROR, e.getMessage() + stashNote(stashId));
+            return new OperationResult(Kind.ERROR, e.getMessage() + stashNote(stashId), workspaceChanged);
         }
         finally
         {
@@ -208,14 +212,19 @@ public final class PullOperations
             int updated = push(git, remote, name, merge);
             if (updated < 0)
                 return new OperationResult(Kind.ERROR,
-                    "Получение прошло, но push отклонён. Повторите умную отправку."); //$NON-NLS-1$
+                    "Получение прошло, но push отклонён. Повторите умную отправку.", //$NON-NLS-1$
+                    pulled.workspaceChanged());
             return updated == 0
-                ? new OperationResult(Kind.NO_CHANGE, "Ветка уже синхронизирована.") //$NON-NLS-1$
-                : new OperationResult(Kind.SUCCESS, pulled.message() + " Отправлена ветка " + name); //$NON-NLS-1$
+                ? new OperationResult(Kind.NO_CHANGE, "Ветка уже синхронизирована.", //$NON-NLS-1$
+                    pulled.workspaceChanged())
+                : new OperationResult(Kind.SUCCESS, pulled.message() + " Отправлена ветка " + name, //$NON-NLS-1$
+                    pulled.workspaceChanged());
         }
         catch (GitAPIException | IOException e)
         {
-            return new OperationResult(Kind.ERROR, "Получение прошло, но отправка не удалась: " + e.getMessage()); //$NON-NLS-1$
+            return new OperationResult(Kind.ERROR,
+                "Получение прошло, но отправка не удалась: " + e.getMessage(), //$NON-NLS-1$
+                pulled.workspaceChanged());
         }
     }
 

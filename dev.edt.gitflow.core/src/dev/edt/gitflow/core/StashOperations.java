@@ -17,12 +17,21 @@ public final class StashOperations
 
     public enum Outcome { CREATED, NO_CHANGES, APPLIED, NOT_FOUND, CONFLICTS, ERROR }
 
-    public record Result(Outcome outcome, String detail)
+    public record Result(Outcome outcome, String detail, String stashId)
     {
+        public Result(Outcome outcome, String detail)
+        {
+            this(outcome, detail, null);
+        }
     }
 
     private StashOperations()
     {
+    }
+
+    public static boolean hasStash(Repository repository) throws GitAPIException
+    {
+        return !Git.wrap(repository).stashList().call().isEmpty();
     }
 
     public static Result quickStash(Repository repository, boolean includeUntracked, IProgressMonitor monitor)
@@ -38,7 +47,8 @@ public final class StashOperations
             RevCommit stash = git.stashCreate().setIncludeUntracked(includeUntracked)
                 .setWorkingDirectoryMessage(name).call();
             monitor.worked(1);
-            return stash == null ? new Result(Outcome.NO_CHANGES, null) : new Result(Outcome.CREATED, name);
+            return stash == null ? new Result(Outcome.NO_CHANGES, null)
+                : new Result(Outcome.CREATED, name, stash.getId().name());
         }
         catch (GitAPIException | java.io.IOException e)
         {

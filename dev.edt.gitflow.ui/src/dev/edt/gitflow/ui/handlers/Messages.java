@@ -15,4 +15,9 @@ public final class Messages
     {
         return BUNDLE.getString(key);
     }
+
+    public static String getOrDefault(String key, String fallback)
+    {
+        return BUNDLE.containsKey(key) ? BUNDLE.getString(key) : BUNDLE.getString(fallback);
+    }
 }

@@ -81,7 +81,7 @@ public final class BranchOperations
                     if (restored.outcome() != StashOperations.Outcome.APPLIED)
                         return new OperationResult(Kind.CONFLICT,
                             "Переключение не удалось; исходные изменения остались в стеше: " //$NON-NLS-1$
-                                + restored.detail());
+                                + restored.detail(), true);
                 }
                 return new OperationResult(Kind.ERROR, "Переключение не удалось: " + e.getMessage()); //$NON-NLS-1$
             }
@@ -92,15 +92,16 @@ public final class BranchOperations
                 StashOperations.Result restored = StashOperations.applyAndDrop(repository, stashId);
                 if (restored.outcome() != StashOperations.Outcome.APPLIED)
                     return new OperationResult(Kind.CONFLICT,
-                        "Ветка переключена, но изменения остались в стеше: " + restored.detail()); //$NON-NLS-1$
+                        "Ветка переключена, но изменения остались в стеше: " + restored.detail(), true); //$NON-NLS-1$
             }
             monitor.worked(1);
-            return new OperationResult(Kind.SUCCESS, "Текущая ветка: " + target); //$NON-NLS-1$
+            return new OperationResult(Kind.SUCCESS, "Текущая ветка: " + target, true); //$NON-NLS-1$
         }
         catch (GitAPIException | IOException e)
         {
             return new OperationResult(Kind.ERROR,
-                e.getMessage() + (stashId == null ? "" : " Изменения сохранены в стеше " + stashId)); //$NON-NLS-1$ //$NON-NLS-2$
+                e.getMessage() + (stashId == null ? "" : " Изменения сохранены в стеше " + stashId), //$NON-NLS-1$ //$NON-NLS-2$
+                true);
         }
         finally
         {

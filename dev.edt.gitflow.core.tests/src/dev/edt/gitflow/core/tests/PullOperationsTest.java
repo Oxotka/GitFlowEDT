@@ -68,6 +68,7 @@ public class PullOperationsTest
                 OperationResult result = PullOperations.smartPull(local.getRepository(), true,
                     new NullProgressMonitor());
                 assertTrue(result.toString(), result.succeeded());
+                assertTrue(result.workspaceChanged());
                 assertTrue(Files.exists(work.resolve("remote.txt"))); //$NON-NLS-1$
                 assertEquals("dirty", Files.readString(work.resolve("local.txt"))); //$NON-NLS-1$ //$NON-NLS-2$
                 assertEquals(source.getRepository().resolve("HEAD"), //$NON-NLS-1$
@@ -129,6 +130,7 @@ public class PullOperationsTest
                 OperationResult result = PullOperations.smartPush(local.getRepository(), true,
                     new NullProgressMonitor());
                 assertTrue(result.toString(), result.succeeded());
+                assertTrue(result.workspaceChanged());
                 assertEquals(local.getRepository().resolve("HEAD"), //$NON-NLS-1$
                     origin.getRepository().resolve("refs/heads/" + branch)); //$NON-NLS-1$
                 assertTrue(Files.exists(work.resolve("remote.txt"))); //$NON-NLS-1$
@@ -172,6 +174,7 @@ public class PullOperationsTest
                 source.push().setRemote("origin").add(source.getRepository().getFullBranch()).call(); //$NON-NLS-1$
                 OperationResult result = PullOperations.smartPull(local.getRepository(), new NullProgressMonitor());
                 assertTrue(result.toString(), result.succeeded());
+                assertTrue(result.workspaceChanged());
                 assertTrue(Files.exists(work.resolve("remote.txt"))); //$NON-NLS-1$
                 assertTrue(Files.exists(work.resolve("local.txt"))); //$NON-NLS-1$
                 assertTrue(local.stashList().call().isEmpty());
@@ -200,6 +203,7 @@ public class PullOperationsTest
                 source.push().setRemote("origin").add(source.getRepository().getFullBranch()).call(); //$NON-NLS-1$
                 OperationResult result = PullOperations.smartPull(local.getRepository(), new NullProgressMonitor());
                 assertEquals(OperationResult.Kind.CONFLICT, result.kind());
+                assertTrue(result.workspaceChanged());
                 assertFalse(local.stashList().call().isEmpty());
             }
         }
@@ -224,9 +228,12 @@ public class PullOperationsTest
                 commit(local, work, "local.txt", "local"); //$NON-NLS-1$ //$NON-NLS-2$
                 OperationResult result = PullOperations.smartPush(local.getRepository(), new NullProgressMonitor());
                 assertTrue(result.toString(), result.succeeded());
+                assertFalse(result.workspaceChanged());
                 assertEquals(origin.getRepository().resolve("HEAD"), local.getRepository().resolve("HEAD")); //$NON-NLS-1$ //$NON-NLS-2$
-                assertEquals(OperationResult.Kind.NO_CHANGE,
-                    PullOperations.smartPush(local.getRepository(), new NullProgressMonitor()).kind());
+                OperationResult alreadySynced = PullOperations.smartPush(local.getRepository(),
+                    new NullProgressMonitor());
+                assertEquals(OperationResult.Kind.NO_CHANGE, alreadySynced.kind());
+                assertFalse(alreadySynced.workspaceChanged());
             }
         }
     }
@@ -255,6 +262,7 @@ public class PullOperationsTest
                 OperationResult result = PullOperations.fetch(local.getRepository(), new NullProgressMonitor());
 
                 assertTrue(result.toString(), result.succeeded());
+                assertFalse(result.workspaceChanged());
                 assertEquals(head, local.getRepository().resolve("HEAD")); //$NON-NLS-1$
                 assertEquals("keep", Files.readString(work.resolve("local.txt"))); //$NON-NLS-1$ //$NON-NLS-2$
                 assertEquals(source.getRepository().resolve("HEAD"), //$NON-NLS-1$

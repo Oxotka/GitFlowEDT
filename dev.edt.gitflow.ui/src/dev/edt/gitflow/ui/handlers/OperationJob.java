@@ -1,6 +1,7 @@
 package dev.edt.gitflow.ui.handlers;
 
 import java.util.function.BiFunction;
+import java.util.function.Consumer;
 
 import org.eclipse.core.commands.ExecutionEvent;
 import org.eclipse.core.resources.ResourcesPlugin;
@@ -52,6 +53,27 @@ public final class OperationJob
         BiFunction<Repository, IProgressMonitor, OperationResult> operation,
         BiFunction<Repository, IProgressMonitor, OperationResult> confirmedOperation)
     {
+        schedule(repository, shell, title, operation, confirmedOperation, true);
+    }
+
+    /**
+     * @param refreshWorkspace {@code false} для операций, меняющих только индекс
+     *            (stage/unstage/commit): рабочая копия не тронута, и широкое
+     *            {@code refreshLocal} лишь рассылает лишние события workspace.
+     */
+    public static void schedule(Repository repository, Shell shell, String title,
+        BiFunction<Repository, IProgressMonitor, OperationResult> operation,
+        BiFunction<Repository, IProgressMonitor, OperationResult> confirmedOperation,
+        boolean refreshWorkspace)
+    {
+        schedule(repository, shell, title, operation, confirmedOperation, refreshWorkspace, null);
+    }
+
+    public static void schedule(Repository repository, Shell shell, String title,
+        BiFunction<Repository, IProgressMonitor, OperationResult> operation,
+        BiFunction<Repository, IProgressMonitor, OperationResult> confirmedOperation,
+        boolean refreshWorkspace, Consumer<OperationResult> completionAction)
+    {
         if (GitFlowView.isRunning(repository))
         {
             GitFlowView.publish(Messages.get("operationAlreadyRunning")); //$NON-NLS-1$
@@ -65,8 +87,7 @@ public final class OperationJob
             {
                 OperationResult result = operation.apply(repository, monitor);
                 completion[0] = result;
-                if (result.kind() != OperationResult.Kind.NO_CHANGE
-                    && result.kind() != OperationResult.Kind.NEEDS_CONFIRMATION)
+                if (refreshWorkspace && result.workspaceChanged())
                 {
                     try
                     {
@@ -99,12 +120,17 @@ public final class OperationJob
                         {
                             if (shell != null && !shell.isDisposed()
                                 && MessageDialog.openQuestion(shell, title, completion[0].message()))
-                                schedule(repository, shell, title, confirmedOperation, null);
+                                schedule(repository, shell, title, confirmedOperation, null,
+                                    refreshWorkspace, completionAction);
                             else
                                 GitFlowView.publish(title + Messages.get("operationCancelled")); //$NON-NLS-1$
                         }
                         else
+                        {
+                            if (completionAction != null)
+                                completionAction.accept(completion[0]);
                             GitFlowView.publish(title + ": " + completion[0].message()); //$NON-NLS-1$
+                        }
                     });
                 else if (!changeEvent.getResult().isOK())
                     GitFlowView.publish(title + ": " + changeEvent.getResult().getMessage()); //$NON-NLS-1$
@@ -133,7 +159,8 @@ public final class OperationJob
                         .append(result.message()).append('\n');
                     try
                     {
-                        Repositories.refresh(repository, monitor);
+                        if (result.workspaceChanged())
+                            Repositories.refresh(repository, monitor);
                     }
                     catch (CoreException e)
                     {

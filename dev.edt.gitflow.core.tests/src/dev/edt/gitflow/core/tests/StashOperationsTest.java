@@ -2,6 +2,7 @@ package dev.edt.gitflow.core.tests;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 import java.nio.file.Files;
@@ -28,16 +29,21 @@ public class StashOperationsTest
             git.commit().setMessage("base").setAuthor("Test", "test@example.org") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
                 .setCommitter("Test", "test@example.org").call(); //$NON-NLS-1$ //$NON-NLS-2$
             NullProgressMonitor monitor = new NullProgressMonitor();
+            assertFalse(StashOperations.hasStash(git.getRepository()));
             assertEquals(Outcome.NO_CHANGES, StashOperations.quickStash(git.getRepository(), true, monitor).outcome());
             Files.writeString(tracked, "changed\n"); //$NON-NLS-1$
             Path untracked = directory.resolve("new.txt"); //$NON-NLS-1$
             Files.writeString(untracked, "new\n"); //$NON-NLS-1$
-            assertEquals(Outcome.CREATED, StashOperations.quickStash(git.getRepository(), true, monitor).outcome());
+            StashOperations.Result stash = StashOperations.quickStash(git.getRepository(), true, monitor);
+            assertEquals(Outcome.CREATED, stash.outcome());
+            assertTrue(StashOperations.hasStash(git.getRepository()));
+            assertNotNull(stash.stashId());
             assertFalse(Files.exists(untracked));
             assertEquals(Outcome.APPLIED, StashOperations.quickPop(git.getRepository(), monitor).outcome());
             assertEquals("changed\n", Files.readString(tracked)); //$NON-NLS-1$
             assertTrue(Files.exists(untracked));
             assertTrue(git.stashList().call().isEmpty());
+            assertFalse(StashOperations.hasStash(git.getRepository()));
         }
     }
 

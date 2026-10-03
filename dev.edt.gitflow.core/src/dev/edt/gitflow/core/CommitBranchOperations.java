@@ -35,6 +35,7 @@ public final class CommitBranchOperations
             return new OperationResult(Kind.ERROR, "Введите сообщение коммита."); //$NON-NLS-1$
         String stashId = null;
         String original = null;
+        boolean workspaceMayHaveChanged = false;
         monitor.beginTask("Коммит в новую ветку", 5); //$NON-NLS-1$
         try
         {
@@ -52,13 +53,14 @@ public final class CommitBranchOperations
             if (stash == null)
                 return new OperationResult(Kind.ERROR, "Не удалось сохранить изменения перед переключением."); //$NON-NLS-1$
             stashId = stash.getId().name();
+            workspaceMayHaveChanged = true;
             monitor.worked(1);
             git.checkout().setCreateBranch(true).setName(name).call();
             monitor.worked(1);
             StashOperations.Result restored = StashOperations.applyAndDrop(repository, stashId);
             if (restored.outcome() != StashOperations.Outcome.APPLIED)
                 return new OperationResult(Kind.CONFLICT,
-                    "Новая ветка создана, но изменения остались в стеше: " + restored.detail()); //$NON-NLS-1$
+                    "Новая ветка создана, но изменения остались в стеше: " + restored.detail(), true); //$NON-NLS-1$
             stashId = null;
             if (stageTracked)
                 git.add().setUpdate(true).addFilepattern(".").call(); //$NON-NLS-1$
@@ -74,7 +76,7 @@ public final class CommitBranchOperations
                 if (!returned.succeeded())
                     return new OperationResult(Kind.CONFLICT,
                         "Коммит создан в ветке " + name + ", но возврат не завершён: " //$NON-NLS-1$ //$NON-NLS-2$
-                            + returned.message());
+                            + returned.message(), true);
             }
             monitor.worked(1);
             if (push)
@@ -93,12 +95,14 @@ public final class CommitBranchOperations
             }
             monitor.worked(1);
             return new OperationResult(Kind.SUCCESS, "Коммит создан в ветке " + name //$NON-NLS-1$
-                + (returnToOriginal ? "; исходная ветка восстановлена." : ".")); //$NON-NLS-1$ //$NON-NLS-2$
+                + (returnToOriginal ? "; исходная ветка восстановлена." : "."), //$NON-NLS-1$ //$NON-NLS-2$
+                returnToOriginal && workspaceMayHaveChanged);
         }
         catch (GitAPIException | IOException e)
         {
             return new OperationResult(Kind.ERROR, e.getMessage()
-                + (stashId == null ? "" : " Изменения сохранены в стеше " + stashId)); //$NON-NLS-1$ //$NON-NLS-2$
+                + (stashId == null ? "" : " Изменения сохранены в стеше " + stashId), //$NON-NLS-1$ //$NON-NLS-2$
+                workspaceMayHaveChanged);
         }
         finally
         {
@@ -114,6 +118,7 @@ public final class CommitBranchOperations
         if (target == null || !org.eclipse.jgit.api.CreateBranchCommand.isValidBranchName(target))
             return new OperationResult(Kind.ERROR, "Некорректное имя ветки."); //$NON-NLS-1$
         String stashId = null;
+        boolean workspaceMayHaveChanged = false;
         monitor.beginTask("Перенос коммита", 6); //$NON-NLS-1$
         try (RevWalk walk = new RevWalk(repository))
         {
@@ -140,6 +145,7 @@ public final class CommitBranchOperations
                 if (stash == null)
                     return new OperationResult(Kind.ERROR, "Не удалось сохранить локальные изменения."); //$NON-NLS-1$
                 stashId = stash.getId().name();
+                workspaceMayHaveChanged = true;
             }
             monitor.worked(1);
             if (create)
@@ -150,10 +156,11 @@ public final class CommitBranchOperations
             else
             {
                 git.checkout().setName(target).call();
+                workspaceMayHaveChanged = true;
                 CherryPickResult picked = git.cherryPick().include(head).call();
                 if (picked.getStatus() != CherryPickResult.CherryPickStatus.OK)
                     return new OperationResult(Kind.CONFLICT,
-                        "Cherry-pick остановлен. Исходная ветка не изменена." + stashNote(stashId)); //$NON-NLS-1$
+                        "Cherry-pick остановлен. Исходная ветка не изменена." + stashNote(stashId), true); //$NON-NLS-1$
                 git.checkout().setName(original).call();
             }
             monitor.worked(2);
@@ -161,6 +168,7 @@ public final class CommitBranchOperations
                 return new OperationResult(Kind.ERROR,
                     "Исходная ветка изменилась; коммит из неё не удалён." + stashNote(stashId)); //$NON-NLS-1$
             // All pre-existing changes are in the stash and the target contains the commit.
+            workspaceMayHaveChanged = true;
             git.reset().setMode(ResetType.HARD).setRef(head.getParent(0).getId().name()).call();
             monitor.worked(1);
             if (!returnToOriginal)
@@ -172,14 +180,14 @@ public final class CommitBranchOperations
                 if (restored.outcome() != StashOperations.Outcome.APPLIED)
                     return new OperationResult(Kind.CONFLICT,
                         "Коммит перенесён, но локальные изменения остались в стеше: " //$NON-NLS-1$
-                            + restored.detail());
+                            + restored.detail(), true);
             }
             monitor.worked(1);
-            return new OperationResult(Kind.SUCCESS, "Коммит перенесён в ветку " + target + "."); //$NON-NLS-1$ //$NON-NLS-2$
+            return new OperationResult(Kind.SUCCESS, "Коммит перенесён в ветку " + target + ".", true); //$NON-NLS-1$ //$NON-NLS-2$
         }
         catch (GitAPIException | IOException e)
         {
-            return new OperationResult(Kind.ERROR, e.getMessage() + stashNote(stashId));
+            return new OperationResult(Kind.ERROR, e.getMessage() + stashNote(stashId), workspaceMayHaveChanged);
         }
         finally
         {
