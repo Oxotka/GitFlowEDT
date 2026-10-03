@@ -44,6 +44,13 @@ import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.RepositoryState;
+import org.eclipse.jgit.api.ResetCommand.ResetType;
+import org.eclipse.jgit.diff.DiffEntry;
+import org.eclipse.jgit.diff.DiffFormatter;
+import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.revwalk.RevWalk;
+import org.eclipse.jgit.revwalk.filter.RevFilter;
+import org.eclipse.jgit.util.io.DisabledOutputStream;
 import dev.edt.gitflow.core.GitLinks;
 import org.eclipse.egit.core.internal.indexdiff.IndexDiffCache;
 import org.eclipse.egit.core.internal.indexdiff.IndexDiffCacheEntry;
@@ -66,6 +73,10 @@ import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Label;
 import org.eclipse.swt.widgets.Menu;
 import org.eclipse.swt.widgets.MenuItem;
+import org.eclipse.swt.dnd.Clipboard;
+import org.eclipse.swt.dnd.TextTransfer;
+import org.eclipse.swt.dnd.Transfer;
+import org.eclipse.swt.program.Program;
 import org.eclipse.swt.widgets.Shell;
 import org.eclipse.swt.widgets.Text;
 import org.eclipse.swt.widgets.Tree;
@@ -97,11 +108,22 @@ import dev.edt.gitflow.ui.handlers.OpenLinkHandler;
 import dev.edt.gitflow.ui.handlers.OperationJob;
 import dev.edt.gitflow.ui.handlers.Repositories;
 import dev.edt.gitflow.ui.handlers.SmartCheckoutHandler;
+import org.eclipse.egit.ui.internal.CompareUtils;
+import org.eclipse.egit.ui.internal.branch.BranchOperationUI;
+import org.eclipse.egit.ui.internal.actions.ResetMenu;
+import org.eclipse.egit.ui.internal.dialogs.CreateTagDialog;
+import org.eclipse.egit.ui.internal.commit.RepositoryCommit;
+import org.eclipse.egit.ui.internal.commit.CommitEditor;
+import org.eclipse.egit.ui.internal.commit.command.CherryPickUI;
+import org.eclipse.egit.core.op.TagOperation;
+import org.eclipse.egit.core.internal.credentials.EGitCredentialsProvider;
+import org.eclipse.egit.ui.internal.push.PushTagsWizard;
 
 public class GitFlowView extends ViewPart
 {
     public static final String ID = "dev.edt.gitflow.ui.view.operations"; //$NON-NLS-1$
     private static final String PLUGIN_ID = "dev.edt.gitflow.ui"; //$NON-NLS-1$
+    private static final int HISTORY_PAGE_SIZE = 30;
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss"); //$NON-NLS-1$
     private static final StringBuilder HISTORY = new StringBuilder();
     private static final Map<File, Integer> RUNNING = new HashMap<>();
@@ -129,6 +151,10 @@ public class GitFlowView extends ViewPart
     private Tree changesTree;
     private RecentHistoryPane historyPane;
     private ObjectId historyHead;
+    private String historyStateKey;
+    private final List<RecentHistory.Entry> historyEntries = new ArrayList<>();
+    private boolean historyHasMore;
+    private boolean historyLoading;
     private boolean stagedExpanded = true;
     private boolean unstagedExpanded = true;
     private boolean hasStashedChanges;
@@ -304,6 +330,7 @@ public class GitFlowView extends ViewPart
         content.setSashWidth(4);
         changesTree = changeTree(content);
         historyPane = new RecentHistoryPane(content);
+        historyPane.setMenuProvider(this::historyMenu);
         content.setWeights(70, 30);
         Composite footer = new Composite(lower, SWT.NONE);
         footer.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
@@ -754,6 +781,255 @@ public class GitFlowView extends ViewPart
         return index < 0 || index >= repositories.size() ? null : repositories.get(index);
     }
 
+    private Menu historyMenu(RecentHistory.Entry entry)
+    {
+        Repository repository = selectedRepository();
+        if (repository == null)
+            return null;
+        Menu menu = new Menu(historyPane.getShell(), SWT.POP_UP);
+        historyItem(menu, "Открыть изменения", () -> openCommit(entry)); //$NON-NLS-1$
+        String remote = repository.getConfig().getString("remote", "origin", "url"); //$NON-NLS-1$ //$NON-NLS-2$
+        String provider = GitLinks.providerName(remote);
+        if (remote != null && !remote.isBlank())
+            historyItem(menu, provider == null ? "Открыть коммит в удалённом репозитории" //$NON-NLS-1$
+                : "Открыть коммит в " + provider, //$NON-NLS-1$
+                () -> openCommitLink(entry.hash(), remote));
+        new MenuItem(menu, SWT.SEPARATOR);
+        historyItem(menu, "Переключиться на коммит (без ветки)", //$NON-NLS-1$
+            () -> BranchOperationUI.checkout(repository, entry.hash(), true).start());
+        historyItem(menu, "Создать ветку…", //$NON-NLS-1$
+            () -> SmartCheckoutHandler.openCreateBranchWizard(getSite().getShell(), repository));
+        historyItem(menu, "Создать тег…", () -> createTagAt(repository, entry.hash())); //$NON-NLS-1$
+        historyItem(menu, "Применить коммит (cherry-pick)", () -> cherryPick(repository, entry)); //$NON-NLS-1$
+        new MenuItem(menu, SWT.SEPARATOR);
+        String upstream = upstream(repository);
+        MenuItem remoteCompare = historyItem(menu, "Сравнить с удалённой веткой", //$NON-NLS-1$
+            () -> compareWith(repository, entry.hash(), upstream));
+        remoteCompare.setEnabled(upstream != null && resolves(repository, upstream));
+        MenuItem mergeBaseCompare = historyItem(menu, "Сравнить с точкой слияния", //$NON-NLS-1$
+            () -> compareWithMergeBase(repository, entry.hash()));
+        mergeBaseCompare.setEnabled(upstream != null && resolves(repository, upstream));
+        historyItem(menu, "Сравнить с…", () -> compareWithSelectedRef(repository, entry.hash())); //$NON-NLS-1$
+        MenuItem resetItem = new MenuItem(menu, SWT.CASCADE);
+        resetItem.setText("Сброс"); //$NON-NLS-1$
+        Menu resetMenu = new Menu(menu);
+        resetItem.setMenu(resetMenu);
+        historyItem(resetMenu, "Мягко (только указатель ветки)", //$NON-NLS-1$
+            () -> ResetMenu.performReset(getSite().getShell(), repository, entry.plot().getId(), ResetType.SOFT));
+        historyItem(resetMenu, "Средне (указатель ветки и индекс)", //$NON-NLS-1$
+            () -> ResetMenu.performReset(getSite().getShell(), repository, entry.plot().getId(), ResetType.MIXED));
+        historyItem(resetMenu, "Жёстко (ветка, индекс и рабочая копия)", //$NON-NLS-1$
+            () -> ResetMenu.performReset(getSite().getShell(), repository, entry.plot().getId(), ResetType.HARD));
+        new MenuItem(menu, SWT.SEPARATOR);
+        historyItem(menu, "Копировать хеш коммита", () -> copyText(entry.hash())); //$NON-NLS-1$
+        historyItem(menu, "Копировать сообщение коммита", () -> copyText(entry.message())); //$NON-NLS-1$
+        return menu;
+    }
+
+    private static MenuItem historyItem(Menu menu, String label, Runnable action)
+    {
+        MenuItem item = new MenuItem(menu, SWT.PUSH);
+        item.setText(label);
+        item.addListener(SWT.Selection, event -> action.run());
+        return item;
+    }
+
+    private void openCommit(RecentHistory.Entry entry)
+    {
+        Repository repository = selectedRepository();
+        if (repository == null)
+            return;
+        try
+        {
+            CommitEditor.open(new RepositoryCommit(repository, repository.parseCommit(entry.plot())));
+        }
+        catch (Exception e)
+        {
+            showFeedback("Не удалось открыть коммит: " + e.getMessage()); //$NON-NLS-1$
+        }
+    }
+
+    private void openCommitLink(String hash, String remote)
+    {
+        try
+        {
+            String url = GitLinks.fromRemote(remote, GitLinks.Target.COMMIT, hash, null);
+            if (!Program.launch(url))
+                copyText(url);
+        }
+        catch (RuntimeException e)
+        {
+            showFeedback(e.getMessage());
+        }
+    }
+
+    private void createTagAt(Repository repository, String hash)
+    {
+        try
+        {
+            CreateTagDialog dialog = new CreateTagDialog(getSite().getShell(), ObjectId.fromString(hash), repository);
+            if (dialog.open() != org.eclipse.jface.window.Window.OK)
+                return;
+            RevCommit target = repository.parseCommit(dialog.getTagCommit());
+            String name = dialog.getTagName();
+            boolean pushAfter = dialog.shouldStartPushWizard();
+            TagOperation operation = new TagOperation(repository).setName(name).setTarget(target)
+                .setAnnotated(dialog.isAnnotated()).setForce(dialog.shouldOverWriteTag())
+                .setSign(dialog.shouldSign()).setMessage(dialog.getTagMessage())
+                .setCredentialsProvider(new EGitCredentialsProvider());
+            Job job = new Job("Создание метки " + name) //$NON-NLS-1$
+            {
+                @Override
+                protected IStatus run(org.eclipse.core.runtime.IProgressMonitor monitor)
+                {
+                    try
+                    {
+                        operation.execute(monitor);
+                        return Status.OK_STATUS;
+                    }
+                    catch (CoreException e)
+                    {
+                        return e.getStatus();
+                    }
+                }
+            };
+            job.addJobChangeListener(new JobChangeAdapter()
+            {
+                @Override
+                public void done(IJobChangeEvent event)
+                {
+                    onUi(() ->
+                    {
+                        if (event.getResult().isOK())
+                        {
+                            showFeedback("Метка создана: " + name); //$NON-NLS-1$
+                            if (pushAfter)
+                                PushTagsWizard.openWizardDialog(repository, name);
+                        }
+                        else
+                            showFeedback("Не удалось создать метку: " + event.getResult().getMessage()); //$NON-NLS-1$
+                    });
+                }
+            });
+            job.setUser(true);
+            job.setRule(operation.getSchedulingRule());
+            job.schedule();
+        }
+        catch (Exception e)
+        {
+            showFeedback("Не удалось открыть создание метки: " + e.getMessage()); //$NON-NLS-1$
+        }
+    }
+
+    private void cherryPick(Repository repository, RecentHistory.Entry entry)
+    {
+        try
+        {
+            new CherryPickUI().run(repository, repository.parseCommit(entry.plot()), true);
+        }
+        catch (Exception e)
+        {
+            showFeedback("Не удалось применить коммит: " + e.getMessage()); //$NON-NLS-1$
+        }
+    }
+
+    private void compareWith(Repository repository, String selected, String other)
+    {
+        if (other != null)
+            compareCommits(repository, other, selected);
+    }
+
+    private void compareWithMergeBase(Repository repository, String selected)
+    {
+        try (RevWalk walk = new RevWalk(repository))
+        {
+            RevCommit current = walk.parseCommit(repository.resolve(Constants.HEAD));
+            RevCommit selectedCommit = walk.parseCommit(repository.resolve(selected));
+            walk.setRevFilter(RevFilter.MERGE_BASE);
+            walk.markStart(current);
+            walk.markStart(selectedCommit);
+            RevCommit base = walk.next();
+            if (base == null)
+                showFeedback("Общая точка слияния не найдена."); //$NON-NLS-1$
+            else
+                compareCommits(repository, base.name(), selected);
+        }
+        catch (Exception e)
+        {
+            showFeedback("Не удалось найти точку слияния: " + e.getMessage()); //$NON-NLS-1$
+        }
+    }
+
+    private void compareWithSelectedRef(Repository repository, String selected)
+    {
+        String ref = SmartCheckoutHandler.selectReference(getSite().getShell(), repository);
+        if (ref != null)
+            compareCommits(repository, selected, ref);
+    }
+
+    private void compareCommits(Repository repository, String oldRevision, String newRevision)
+    {
+        try (RevWalk walk = new RevWalk(repository);
+            DiffFormatter formatter = new DiffFormatter(DisabledOutputStream.INSTANCE))
+        {
+            RevCommit oldCommit = walk.parseCommit(repository.resolve(oldRevision));
+            RevCommit newCommit = walk.parseCommit(repository.resolve(newRevision));
+            formatter.setRepository(repository);
+            List<DiffEntry> diffs = formatter.scan(oldCommit.getTree(), newCommit.getTree());
+            if (diffs.isEmpty())
+            {
+                showFeedback("Изменений между коммитами нет."); //$NON-NLS-1$
+                return;
+            }
+            IWorkbenchPage page = getSite().getPage();
+            for (DiffEntry diff : diffs)
+                CompareUtils.openInCompare(oldCommit, newCommit, diff.getOldPath(), diff.getNewPath(),
+                    repository, page);
+        }
+        catch (Exception e)
+        {
+            showFeedback("Не удалось сравнить коммиты: " + e.getMessage()); //$NON-NLS-1$
+        }
+    }
+
+    private static String upstream(Repository repository)
+    {
+        try
+        {
+            String branch = repository.getBranch();
+            return new BranchConfig(repository.getConfig(), branch).getRemoteTrackingBranch();
+        }
+        catch (IOException e)
+        {
+            return null;
+        }
+    }
+
+    private static boolean resolves(Repository repository, String revision)
+    {
+        try
+        {
+            return repository.resolve(revision) != null;
+        }
+        catch (IOException e)
+        {
+            return false;
+        }
+    }
+
+    private static void copyText(String value)
+    {
+        Clipboard clipboard = new Clipboard(Display.getDefault());
+        try
+        {
+            clipboard.setContents(new Object[] { value }, new Transfer[] { TextTransfer.getInstance() });
+        }
+        finally
+        {
+            clipboard.dispose();
+        }
+    }
+
     private void updateRepository()
     {
         Repository repository = selectedRepository();
@@ -773,7 +1049,11 @@ public class GitFlowView extends ViewPart
             changes = new WorkingChanges(List.of(), List.of());
             hasStashedChanges = false;
             historyHead = null;
-            historyPane.setCommits(List.of());
+            historyEntries.clear();
+            historyHasMore = false;
+            historyLoading = false;
+            historyStateKey = null;
+            historyPane.setCommits(List.of(), false, null);
             movedPath = null;
             fillChangesTree();
         }
@@ -903,6 +1183,7 @@ public class GitFlowView extends ViewPart
         if (repository == null || RUNNING.containsKey(repository.getDirectory()))
             return;
         ObjectId displayedHead = historyHead;
+        String displayedHistoryState = historyStateKey;
         ObjectId displayedOverviewHead = overviewHead;
         ObjectId displayedOverviewUpstream = overviewUpstream;
         RepositoryOverview displayedOverview = overview;
@@ -923,11 +1204,12 @@ public class GitFlowView extends ViewPart
                     String mergeMessage = latestState == RepositoryState.MERGING_RESOLVED
                         ? repository.readMergeCommitMsg() : null;
                     ObjectId latestHead = repository.resolve(Constants.HEAD);
+                    String latestHistoryState = RecentHistory.stateKey(repository);
                     String tracking = new BranchConfig(repository.getConfig(), repository.getBranch())
                         .getRemoteTrackingBranch();
                     ObjectId latestUpstream = tracking == null ? null : repository.resolve(tracking);
-                    List<RecentHistory.Entry> latestHistory = Objects.equals(latestHead, displayedHead)
-                        ? null : RecentHistory.read(repository, 30);
+                    List<RecentHistory.Entry> latestHistory = Objects.equals(latestHistoryState,
+                        displayedHistoryState) ? null : RecentHistory.read(repository, 0, HISTORY_PAGE_SIZE + 1);
                     onUi(() ->
                     {
                         if (instance == GitFlowView.this && current == generation)
@@ -941,7 +1223,14 @@ public class GitFlowView extends ViewPart
                             if (latestHistory != null)
                             {
                                 historyHead = latestHead;
-                                historyPane.setCommits(latestHistory);
+                                historyStateKey = latestHistoryState;
+                                historyEntries.clear();
+                                historyEntries.addAll(latestHistory.subList(0,
+                                    Math.min(HISTORY_PAGE_SIZE, latestHistory.size())));
+                                historyHasMore = latestHistory.size() > HISTORY_PAGE_SIZE;
+                                historyLoading = false;
+                                historyPane.setCommits(historyEntries, historyHasMore,
+                                    GitFlowView.this::loadMoreHistory);
                             }
                             fillChangesTree();
                             updatePrimary();
@@ -979,6 +1268,67 @@ public class GitFlowView extends ViewPart
         });
         refreshJob.setSystem(true);
         refreshJob.schedule(delay);
+    }
+
+    private void loadMoreHistory()
+    {
+        Repository repository = selectedRepository();
+        ObjectId expectedHead = historyHead;
+        String expectedHistoryState = historyStateKey;
+        if (repository == null || expectedHead == null || historyLoading || !historyHasMore)
+            return;
+        historyLoading = true;
+        historyPane.setLoadingMore(true);
+        int offset = historyEntries.size();
+        new Job("Загрузить следующие коммиты") //$NON-NLS-1$
+        {
+            @Override
+            protected IStatus run(org.eclipse.core.runtime.IProgressMonitor monitor)
+            {
+                try
+                {
+                    List<RecentHistory.Entry> page = RecentHistory.read(repository, offset,
+                        HISTORY_PAGE_SIZE + 1);
+                    ObjectId currentHead = repository.resolve(Constants.HEAD);
+                    String currentHistoryState = RecentHistory.stateKey(repository);
+                    onUi(() ->
+                    {
+                        if (!sameRepository(selectedRepository(), repository))
+                            return;
+                        historyLoading = false;
+                        if (!Objects.equals(historyHead, expectedHead)
+                            || !Objects.equals(currentHead, expectedHead)
+                            || !Objects.equals(historyStateKey, expectedHistoryState)
+                            || !Objects.equals(currentHistoryState, expectedHistoryState))
+                        {
+                            historyPane.setLoadingMore(false);
+                            scheduleRefresh(0);
+                            return;
+                        }
+                        int loaded = Math.min(HISTORY_PAGE_SIZE, page.size());
+                        List<RecentHistory.Entry> nextPage = page.subList(0, loaded);
+                        historyEntries.addAll(nextPage);
+                        historyHasMore = page.size() > HISTORY_PAGE_SIZE;
+                        historyPane.appendCommits(nextPage, historyHasMore,
+                            GitFlowView.this::loadMoreHistory);
+                    });
+                    return Status.OK_STATUS;
+                }
+                catch (Exception e)
+                {
+                    onUi(() ->
+                    {
+                        if (sameRepository(selectedRepository(), repository))
+                        {
+                            historyLoading = false;
+                            historyPane.setLoadingMore(false);
+                            showFeedback("Не удалось загрузить коммиты: " + e.getMessage()); //$NON-NLS-1$
+                        }
+                    });
+                    return new Status(IStatus.ERROR, PLUGIN_ID, e.getMessage(), e);
+                }
+            }
+        }.schedule();
     }
 
     private void updateMergeMessage(RepositoryState state, String mergeMessage)

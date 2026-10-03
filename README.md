@@ -42,7 +42,7 @@ Directory-location на `~/.p2/pool/plugins`). При переносе на др
 
 ## Установка в EDT на Windows
 
-Текущая версия для локальной проверки — `dist/gitflow-ops-0.7.12-preview.zip`.
+Текущая версия для локальной проверки — `dist/gitflow-ops-0.8.8-preview.zip`.
 Это p2-репозиторий: архив не нужно распаковывать или копировать в `plugins`.
 
 1. Закройте EDT. Если была установлена первая версия через `dropins`, удалите
@@ -50,7 +50,7 @@ Directory-location на `~/.p2/pool/plugins`). При переносе на др
    EDT Start каталог EDT обычно находится в
    `%LOCALAPPDATA%\1C\1cedtstart\installations\<версия EDT>`.
 2. Запустите EDT → **Справка → Установить новое ПО…** → **Добавить…** →
-   **Архив…** и выберите `gitflow-ops-0.7.12-preview.zip`.
+   **Архив…** и выберите `gitflow-ops-0.8.8-preview.zip`.
 3. Выберите **Git Flow Ops**, завершите мастер и перезапустите EDT.
 4. Откройте **Git Flow Ops → Открыть Git-панель**. Её также можно открыть через
    **Окно → Показать представление → Другие… → Git Flow Ops → Git**.

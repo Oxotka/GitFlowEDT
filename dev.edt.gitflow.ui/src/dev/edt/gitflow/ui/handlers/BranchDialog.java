@@ -17,7 +17,7 @@ import org.eclipse.swt.widgets.Text;
 
 final class BranchDialog extends Dialog
 {
-    enum Mode { CHECKOUT, COMMIT, MOVE }
+    enum Mode { CHECKOUT, COMPARE, COMMIT, MOVE }
 
     private final Mode mode;
     private final Repository repository;
@@ -55,7 +55,7 @@ final class BranchDialog extends Dialog
         fields.setLayout(new GridLayout(2, false));
         fields.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
 
-        if (mode != Mode.CHECKOUT)
+        if (mode != Mode.CHECKOUT && mode != Mode.COMPARE)
             createBranchField(fields);
         feedback = new Label(fields, SWT.WRAP);
         GridData feedbackData = new GridData(SWT.FILL, SWT.CENTER, true, false, 2, 1);
@@ -69,8 +69,9 @@ final class BranchDialog extends Dialog
             String listError = null;
             try
             {
-                BranchPicker picker = new BranchPicker(fields, repository, mode == Mode.CHECKOUT,
-                    mode == Mode.CHECKOUT, choice ->
+                boolean selectReference = mode == Mode.CHECKOUT || mode == Mode.COMPARE;
+                BranchPicker picker = new BranchPicker(fields, repository, selectReference,
+                    selectReference, choice ->
                 {
                     if (choice == null)
                     {
@@ -84,7 +85,7 @@ final class BranchDialog extends Dialog
                         selectedChoice = choice;
                         if (createButton != null)
                             createButton.setSelection(false);
-                        showFeedback(choice.remote()
+                        showFeedback(mode == Mode.COMPARE ? "" : choice.remote()
                             ? Messages.get(choice.localExists() ? "remoteUsesLocal" : "remoteCreatesLocal") //$NON-NLS-1$ //$NON-NLS-2$
                                 + " " + choice.localName() //$NON-NLS-1$
                             : ""); //$NON-NLS-1$
@@ -118,7 +119,7 @@ final class BranchDialog extends Dialog
             stageButton = checkbox(fields, Messages.get("stageTracked"), false); //$NON-NLS-1$
             pushButton = checkbox(fields, Messages.get("pushNewBranch"), false); //$NON-NLS-1$
         }
-        if (mode != Mode.CHECKOUT)
+        if (mode != Mode.CHECKOUT && mode != Mode.COMPARE)
             returnButton = checkbox(fields, Messages.get("returnToOriginal"), true); //$NON-NLS-1$
         return container;
     }
@@ -128,6 +129,7 @@ final class BranchDialog extends Dialog
     {
         super.configureShell(shell);
         shell.setText(Messages.get(mode == Mode.CHECKOUT ? "checkoutTitle" //$NON-NLS-1$
+            : mode == Mode.COMPARE ? "compareBranchTitle" //$NON-NLS-1$
             : mode == Mode.COMMIT ? "commitBranchTitle" : "moveTitle")); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
@@ -186,10 +188,11 @@ final class BranchDialog extends Dialog
     @Override
     protected void okPressed()
     {
-        branch = mode == Mode.CHECKOUT && selectedChoice != null
+        boolean selectReference = mode == Mode.CHECKOUT || mode == Mode.COMPARE;
+        branch = selectReference && selectedChoice != null
             ? selectedChoice.kind() == BranchPicker.Kind.TAG ? selectedChoice.ref() : selectedChoice.localName()
             : branchField == null ? "" : branchField.getText().trim(); //$NON-NLS-1$
-        boolean tag = mode == Mode.CHECKOUT && selectedChoice != null
+        boolean tag = selectReference && selectedChoice != null
             && selectedChoice.kind() == BranchPicker.Kind.TAG;
         if (!tag && !dev.edt.gitflow.core.BranchOperations.isValidBranchName(branch))
         {
@@ -224,4 +227,5 @@ final class BranchDialog extends Dialog
     boolean push() { return push; }
     boolean stageTracked() { return stageTracked; }
     boolean edtBranchWizardRequested() { return edtBranchWizardRequested; }
+    String selectedRef() { return selectedChoice == null ? null : selectedChoice.ref(); }
 }

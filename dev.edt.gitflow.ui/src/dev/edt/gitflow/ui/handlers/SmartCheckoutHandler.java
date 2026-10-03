@@ -30,4 +30,15 @@ public class SmartCheckoutHandler extends AbstractHandler
                 (selected, monitor) -> BranchOperations.checkout(selected, dialog.branch(), dialog.createBranch(),
                     dialog.startPoint(), monitor), null);
     }
+
+    public static void openCreateBranchWizard(org.eclipse.swt.widgets.Shell shell, Repository repository)
+    {
+        EdtBranchWizardWorkflow.open(shell, repository);
+    }
+
+    public static String selectReference(org.eclipse.swt.widgets.Shell shell, Repository repository)
+    {
+        BranchDialog dialog = new BranchDialog(shell, BranchDialog.Mode.COMPARE, repository);
+        return dialog.open() == Window.OK ? dialog.selectedRef() : null;
+    }
 }
