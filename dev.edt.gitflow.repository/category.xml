@@ -3,7 +3,7 @@
    <feature id="dev.edt.gitflow.feature">
       <category name="gitflow"/>
    </feature>
-   <category-def name="gitflow" label="Git Flow Ops">
+   <category-def name="gitflow" label="Git Flow">
       <description>Git operations for 1C:Enterprise Development Tools.</description>
    </category-def>
 </site>

@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <feature
       id="dev.edt.gitflow.feature"
-      label="Git Flow Ops"
-      version="0.8.8.qualifier"
-      provider-name="Git Flow Ops Contributors">
+      label="Git Flow"
+      version="0.8.8"
+      provider-name="Git Flow Contributors">
    <description>Git operations for 1C:Enterprise Development Tools.</description>
    <plugin id="dev.edt.gitflow.core" download-size="0" install-size="0"
            version="0.0.0" unpack="false"/>

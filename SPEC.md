@@ -1,4 +1,4 @@
-# Git Flow Ops — плагин потоковых Git-операций для 1C:EDT
+# Git Flow — плагин потоковых Git-операций для 1C:EDT
 
 Версия спеки: 0.3 · 2026-09-30 · Статус: утверждён, в разработке (фаза 1)
 
@@ -79,7 +79,7 @@ its.1c.ru отдаёт контент только через JS — прямы�
 
 ### 4.1 Идентификация
 - Namespace плагинов: **`dev.edt.gitflow`** (сторонний, не пересекается с `com._1c.*`).
-- Продуктовое имя: «Git Flow Ops».
+- Продуктовое имя: «Git Flow».
 
 ### 4.2 Состав
 Два OSGi-бандла, Maven/Tycho-сборка:
@@ -384,7 +384,7 @@ force и только после успешной отправки сохран�
       Big Model переиндексировалась).
 
 ### 6.8 Настройки плагина
-Preference page «Git Flow Ops» (scoped: дефолт + per workspace):
+Preference page «Git Flow» (scoped: дефолт + per workspace):
 - untracked в Quick Stash (bool, default true);
 - шаблон автоимени стеша (string, default `WIP @ {branch} {date}` );
 - защищённые ветки (comma-separated, default `master,main,develop`);

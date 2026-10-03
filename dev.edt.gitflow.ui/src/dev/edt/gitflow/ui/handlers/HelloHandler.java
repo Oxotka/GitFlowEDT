@@ -5,7 +5,7 @@ import org.eclipse.core.commands.ExecutionEvent;
 import org.eclipse.jface.dialogs.MessageDialog;
 import org.eclipse.ui.handlers.HandlerUtil;
 
-/** Shows that Git Flow Ops is installed in EDT. */
+/** Shows that Git Flow is installed in EDT. */
 public class HelloHandler extends AbstractHandler
 {
     @Override

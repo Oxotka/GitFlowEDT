@@ -7,11 +7,11 @@
   <parent>
     <groupId>dev.edt.gitflow</groupId>
     <artifactId>dev.edt.gitflow.parent</artifactId>
-    <version>0.8.8-SNAPSHOT</version>
+    <version>0.8.8</version>
   </parent>
 
   <artifactId>dev.edt.gitflow.ui</artifactId>
   <packaging>eclipse-plugin</packaging>
 
-  <name>Git Flow Ops — UI (команды, меню, диалоги)</name>
+  <name>Git Flow — UI (команды, меню, диалоги)</name>
 </project>

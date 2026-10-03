@@ -161,7 +161,7 @@ final class StagingSmartPush
                 ? invocation.getCause() : e;
             log("Адаптер кнопки Smart Push отключён.", cause); //$NON-NLS-1$
             restoreNativeButton(button);
-            MessageDialog.openError(view.getSite().getShell(), "Git Flow Ops", //$NON-NLS-1$
+            MessageDialog.openError(view.getSite().getShell(), "Git Flow", //$NON-NLS-1$
                 "Операция не запущена: " + cause.getMessage()); //$NON-NLS-1$
         }
     }
@@ -276,7 +276,7 @@ final class StagingSmartPush
             }
         if (result.kind() == OperationResult.Kind.NEEDS_CONFIRMATION)
         {
-            if (MessageDialog.openQuestion(view.getSite().getShell(), "Git Flow Ops", result.message())) //$NON-NLS-1$
+            if (MessageDialog.openQuestion(view.getSite().getShell(), "Git Flow", result.message())) //$NON-NLS-1$
                 push(view, button, repository, true, committed);
         }
         else if (result.kind() == OperationResult.Kind.NEEDS_NATIVE_MERGE)
@@ -285,7 +285,7 @@ final class StagingSmartPush
             view.getViewSite().getActionBars().getStatusLineManager()
                 .setMessage((committed ? "Коммит создан. " : "") + result.message()); //$NON-NLS-1$ //$NON-NLS-2$
         else
-            MessageDialog.openError(view.getSite().getShell(), "Git Flow Ops", //$NON-NLS-1$
+            MessageDialog.openError(view.getSite().getShell(), "Git Flow", //$NON-NLS-1$
                 (committed ? "Коммит сохранён локально. " : "") + result.message()); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
