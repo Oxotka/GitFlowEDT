@@ -10,7 +10,7 @@
   <packaging>pom</packaging>
 
   <name>Git Flow — parent</name>
-  <description>Потоковые Git-операции для 1C:EDT. Спека: SPEC.md.</description>
+  <description>Плагин для работы с Git в 1C:EDT.</description>
 
   <modules>
     <module>dev.edt.gitflow.core</module>

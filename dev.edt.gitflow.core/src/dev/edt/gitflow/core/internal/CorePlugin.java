@@ -3,10 +3,7 @@ package dev.edt.gitflow.core.internal;
 import org.eclipse.core.runtime.Plugin;
 import org.osgi.framework.BundleContext;
 
-/**
- * Активатор core-бандла. Логика операций (Smart Pull, стеши и т.д.)
- * добавляется в фазе 1 — см. SPEC.md §5, §6.
- */
+/** Activator for the core bundle. */
 public class CorePlugin extends Plugin
 {
     public static final String PLUGIN_ID = "dev.edt.gitflow.core"; //$NON-NLS-1$
