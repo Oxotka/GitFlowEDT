@@ -61,35 +61,7 @@ public class BranchOperationsTest
     }
 
     @Test
-    public void undoPublishedCommitRequiresConfirmation() throws Exception
-    {
-        Path directory = Files.createTempDirectory("gitflow-published-"); //$NON-NLS-1$
-        Path bare = directory.resolve("origin.git"); //$NON-NLS-1$
-        Path work = directory.resolve("work"); //$NON-NLS-1$
-        try (Git origin = Git.init().setBare(true).setDirectory(bare.toFile()).call();
-             Git git = Git.init().setDirectory(work.toFile()).call())
-        {
-            commit(git, work, "base\n"); //$NON-NLS-1$
-            git.remoteAdd().setName("origin").setUri(new URIish(bare.toUri().toString())).call(); //$NON-NLS-1$
-            String branch = git.getRepository().getBranch();
-            git.push().setRemote("origin").add(git.getRepository().getFullBranch()).call(); //$NON-NLS-1$
-            git.getRepository().getConfig().setString("branch", branch, "remote", "origin"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            git.getRepository().getConfig().setString("branch", branch, "merge", //$NON-NLS-1$ //$NON-NLS-2$
-                git.getRepository().getFullBranch());
-            git.getRepository().getConfig().save();
-            commit(git, work, "published\n"); //$NON-NLS-1$
-            git.push().setRemote("origin").add(git.getRepository().getFullBranch()).call(); //$NON-NLS-1$
-            git.fetch().setRemote("origin").call(); //$NON-NLS-1$
-            ObjectId head = git.getRepository().resolve("HEAD"); //$NON-NLS-1$
-            OperationResult result = BranchOperations.undoLastCommit(git.getRepository(), false, false,
-                new NullProgressMonitor());
-            assertEquals(OperationResult.Kind.NEEDS_CONFIRMATION, result.kind());
-            assertEquals(head, git.getRepository().resolve("HEAD")); //$NON-NLS-1$
-        }
-    }
-
-    @Test
-    public void checkoutRestoresDirtyTreeAndUndoKeepsChanges() throws Exception
+    public void checkoutRestoresDirtyTree() throws Exception
     {
         Path directory = Files.createTempDirectory("gitflow-branch-"); //$NON-NLS-1$
         try (Git git = Git.init().setDirectory(directory.toFile()).call())
@@ -102,12 +74,6 @@ public class BranchOperationsTest
             assertTrue(switched.toString(), switched.succeeded());
             assertEquals("dirty\n", Files.readString(directory.resolve("file.txt"))); //$NON-NLS-1$ //$NON-NLS-2$
             assertTrue(git.stashList().call().isEmpty());
-            commit(git, directory, "feature\n"); //$NON-NLS-1$
-            OperationResult undone = BranchOperations.undoLastCommit(git.getRepository(), false, false,
-                new NullProgressMonitor());
-            assertTrue(undone.toString(), undone.succeeded());
-            assertEquals("feature\n", Files.readString(directory.resolve("file.txt"))); //$NON-NLS-1$ //$NON-NLS-2$
-            assertFalse(git.status().call().getModified().isEmpty());
             assertTrue(BranchOperations.checkout(git.getRepository(), original, false,
                 new NullProgressMonitor()).succeeded());
         }

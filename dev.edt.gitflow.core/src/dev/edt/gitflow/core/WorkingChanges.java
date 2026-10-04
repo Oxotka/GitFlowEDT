@@ -12,6 +12,7 @@ import java.util.Set;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.Status;
 import org.eclipse.jgit.api.errors.GitAPIException;
+import org.eclipse.jgit.events.WorkingTreeModifiedEvent;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.Repository;
 
@@ -165,6 +166,7 @@ public record WorkingChanges(List<FileChange> staged, List<FileChange> unstaged)
             if (!file.startsWith(root) || file.equals(root) || Files.isDirectory(file))
                 return new OperationResult(Kind.ERROR, "Недопустимый путь нового файла: " + path); //$NON-NLS-1$
             Files.delete(file);
+            repository.fireEvent(new WorkingTreeModifiedEvent(null, List.of(path)));
             return new OperationResult(Kind.SUCCESS, "Новый файл удалён: " + path, true); //$NON-NLS-1$
         }
         catch (GitAPIException | IOException e)
@@ -178,6 +180,7 @@ public record WorkingChanges(List<FileChange> staged, List<FileChange> unstaged)
         if (!RepositorySupport.isSafe(repository))
             return new OperationResult(Kind.ERROR, "Репозиторий занят другой Git-операцией."); //$NON-NLS-1$
         boolean workspaceChanged = false;
+        Set<String> deletedFiles = new LinkedHashSet<>();
         try
         {
             Git git = Git.wrap(repository);
@@ -209,7 +212,10 @@ public record WorkingChanges(List<FileChange> staged, List<FileChange> unstaged)
                 Path file = root.resolve(path).normalize();
                 if (file.startsWith(root) && !file.equals(root)
                     && (!Files.isDirectory(file) || Files.isSymbolicLink(file)))
-                    Files.deleteIfExists(file);
+                {
+                    if (Files.deleteIfExists(file))
+                        deletedFiles.add(path);
+                }
             }
             return new OperationResult(Kind.SUCCESS,
                 "Изменённые файлы возвращены к HEAD, новые файлы удалены; конфликты не изменены.", //$NON-NLS-1$
@@ -219,6 +225,11 @@ public record WorkingChanges(List<FileChange> staged, List<FileChange> unstaged)
         {
             return new OperationResult(Kind.ERROR, "Вернуть изменения не удалось: " + e.getMessage(), //$NON-NLS-1$
                 workspaceChanged);
+        }
+        finally
+        {
+            if (!deletedFiles.isEmpty())
+                repository.fireEvent(new WorkingTreeModifiedEvent(null, deletedFiles));
         }
     }
 }

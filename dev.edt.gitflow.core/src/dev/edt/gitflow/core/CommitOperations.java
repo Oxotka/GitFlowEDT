@@ -2,8 +2,6 @@ package dev.edt.gitflow.core;
 
 import java.io.IOException;
 import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.jgit.api.Git;
@@ -16,17 +14,10 @@ import dev.edt.gitflow.core.OperationResult.Kind;
 
 public final class CommitOperations
 {
-    private static final Pattern TASK_KEY = Pattern.compile("([A-Z]+-\\d+)"); //$NON-NLS-1$
     private static final Set<String> PROTECTED_BRANCHES = Set.of("main", "master", "develop"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
     private CommitOperations()
     {
-    }
-
-    public static String generateMessage(String branch)
-    {
-        Matcher matcher = TASK_KEY.matcher(branch == null ? "" : branch); //$NON-NLS-1$
-        return matcher.find() ? matcher.group(1) + ": " : null; //$NON-NLS-1$
     }
 
     public static OperationResult safeCommit(Repository repository, String message, boolean stageTracked,

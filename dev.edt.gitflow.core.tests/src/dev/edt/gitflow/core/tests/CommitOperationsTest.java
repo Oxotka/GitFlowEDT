@@ -2,7 +2,6 @@ package dev.edt.gitflow.core.tests;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.nio.file.Files;
@@ -89,13 +88,6 @@ public class CommitOperationsTest
                 assertTrue(local.stashList().call().isEmpty());
             }
         }
-    }
-
-    @Test
-    public void generatesTaskPrefixFromBranch()
-    {
-        assertEquals("JIRA-1234: ", CommitOperations.generateMessage("feature/JIRA-1234-dogovora")); //$NON-NLS-1$ //$NON-NLS-2$
-        assertNull(CommitOperations.generateMessage("feature/no-key")); //$NON-NLS-1$
     }
 
     @Test

@@ -179,16 +179,11 @@ public class GitFlowView extends ViewPart
     private WorkingChanges changes = new WorkingChanges(List.of(), List.of());
     private final IResourceChangeListener resourceListener = event ->
     {
-        int type = event.getType();
         onUi(() ->
         {
             if (instance != this)
                 return;
-            if (type == IResourceChangeEvent.PRE_BUILD)
-                return;
-            if (type == IResourceChangeEvent.POST_BUILD)
-                scheduleRefresh();
-            else if (indexDiffEntry == null && affectsRepositories(event.getDelta()))
+            if (indexDiffEntry == null && affectsRepositories(event.getDelta()))
                 scheduleRefresh(REFRESH_QUICK_DELAY);
         });
     };
@@ -354,8 +349,7 @@ public class GitFlowView extends ViewPart
         getSite().setSelectionProvider(selectionProvider);
         getSite().getPage().addSelectionListener(selectionListener);
         ResourcesPlugin.getWorkspace().addResourceChangeListener(resourceListener,
-            IResourceChangeEvent.POST_CHANGE | IResourceChangeEvent.PRE_BUILD
-                | IResourceChangeEvent.POST_BUILD);
+            IResourceChangeEvent.POST_CHANGE);
     }
 
     private Tree changeTree(Composite parent)
@@ -1127,12 +1121,16 @@ public class GitFlowView extends ViewPart
     {
         if (!sameRepository(selectedRepository(), repository))
             return;
-        changes = changesFrom(data);
-        int changedFiles = (int) java.util.stream.Stream.concat(changes.staged().stream(), changes.unstaged().stream())
-            .map(FileChange::path).distinct().count();
-        overview = new RepositoryOverview(changedFiles, overview.incoming(), overview.outgoing());
-        fillChangesTree();
-        updatePrimary();
+        WorkingChanges latestChanges = changesFrom(data);
+        if (!changes.equals(latestChanges))
+        {
+            changes = latestChanges;
+            int changedFiles = (int) java.util.stream.Stream.concat(changes.staged().stream(), changes.unstaged().stream())
+                .map(FileChange::path).distinct().count();
+            overview = new RepositoryOverview(changedFiles, overview.incoming(), overview.outgoing());
+            fillChangesTree();
+            updatePrimary();
+        }
         scheduleRefresh(0);
     }
 
@@ -1214,6 +1212,7 @@ public class GitFlowView extends ViewPart
                     {
                         if (instance == GitFlowView.this && current == generation)
                         {
+                            boolean changesUpdated = !changes.equals(latestChanges);
                             changes = latestChanges;
                             hasStashedChanges = latestHasStashedChanges;
                             overview = latestOverview;
@@ -1232,7 +1231,8 @@ public class GitFlowView extends ViewPart
                                 historyPane.setCommits(historyEntries, historyHasMore,
                                     GitFlowView.this::loadMoreHistory);
                             }
-                            fillChangesTree();
+                            if (changesUpdated)
+                                fillChangesTree();
                             updatePrimary();
                         }
                     });
@@ -1460,7 +1460,7 @@ public class GitFlowView extends ViewPart
             return new ChangeDisplay(relative, null);
 
         String objectType = metadataTypeKey(parts[0]);
-        if (objectType == null || parts.length < 2)
+        if (objectType == null)
             return new ChangeDisplay(relative, null);
 
         String objectName = parts[1];
@@ -1803,7 +1803,7 @@ public class GitFlowView extends ViewPart
             (selected, monitor) -> CommitOperations.commitAndPush(selected, message,
                 stageTracked, send, false, monitor),
             (selected, monitor) -> CommitOperations.commitAndPush(selected, message,
-                stageTracked, send, true, monitor), true, result ->
+                stageTracked, send, true, monitor), result ->
             {
                 if (result.commitCreated() && !messageField.isDisposed())
                 {
@@ -1866,7 +1866,7 @@ public class GitFlowView extends ViewPart
         OperationJob.schedule(pending.repository(), getSite().getShell(),
             Messages.get(pending.staged() ? "unstageFile" : "stageFile"), //$NON-NLS-1$ //$NON-NLS-2$
             (selected, monitor) -> pending.staged() ? WorkingChanges.unstage(selected, pending.path())
-                : WorkingChanges.stage(selected, pending.path()), null, false, result ->
+                : WorkingChanges.stage(selected, pending.path()), null, result ->
                 {
                     queuedIndexChanges.removeFirstOccurrence(pending);
                     indexChangeRunning = false;
@@ -2026,7 +2026,7 @@ public class GitFlowView extends ViewPart
         OperationJob.schedule(repository, getSite().getShell(),
             Messages.get(staged ? "unstageAll" : "stageAll"), //$NON-NLS-1$ //$NON-NLS-2$
             (selected, monitor) -> staged ? WorkingChanges.unstageAll(selected)
-                : WorkingChanges.stageAll(selected), null, false);
+                : WorkingChanges.stageAll(selected), null);
     }
 
     private void optimisticMove(List<FileChange> files, boolean staged)
@@ -2146,11 +2146,6 @@ public class GitFlowView extends ViewPart
             if (instance != null)
                 instance.selectRepository(repository);
         });
-    }
-
-    public static Repository repositoryForCommands()
-    {
-        return instance == null ? preferredRepository : instance.selectedRepository();
     }
 
     public static void started(Repository repository)

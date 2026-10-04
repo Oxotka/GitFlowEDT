@@ -6,15 +6,12 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.Objects;
 
-import org.eclipse.core.resources.IProject;
-import org.eclipse.core.resources.IResource;
-import org.eclipse.core.resources.ResourcesPlugin;
-import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.Platform;
 import org.eclipse.core.runtime.Status;
 import org.eclipse.core.runtime.jobs.Job;
+import org.eclipse.egit.core.internal.job.RuleUtil;
 import org.eclipse.jface.dialogs.MessageDialog;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
@@ -31,7 +28,6 @@ import org.eclipse.ui.part.ViewPart;
 
 import dev.edt.gitflow.core.OperationResult;
 import dev.edt.gitflow.core.PullOperations;
-import dev.edt.gitflow.core.RepositorySupport;
 import dev.edt.gitflow.ui.handlers.NativePullLauncher;
 
 final class StagingSmartPush
@@ -40,6 +36,7 @@ final class StagingSmartPush
     private static final String HOOKED = PLUGIN_ID + ".smartPushHook"; //$NON-NLS-1$
     private static final String ORIGINAL = PLUGIN_ID + ".nativePushListener"; //$NON-NLS-1$
     private static final String PUSHING = PLUGIN_ID + ".smartPushRunning"; //$NON-NLS-1$
+    private static final String CHECKING = PLUGIN_ID + ".smartPushChecking"; //$NON-NLS-1$
     private static final String REBASE_SECTION = PLUGIN_ID + ".rebaseSection"; //$NON-NLS-1$
     private static final String BUTTON_LABEL = PLUGIN_ID + ".buttonLabel"; //$NON-NLS-1$
 
@@ -115,14 +112,56 @@ final class StagingSmartPush
 
     private static void clicked(ViewPart view, Button button, Method commit, Method enable)
     {
-        if (Boolean.TRUE.equals(button.getData(PUSHING)))
+        if (Boolean.TRUE.equals(button.getData(PUSHING)) || Boolean.TRUE.equals(button.getData(CHECKING)))
             return;
         Repository repository = currentRepository(view);
         if (repository == null)
             return;
+        button.setData(CHECKING, Boolean.TRUE);
+        Job job = new Job("Проверка подготовленных изменений") //$NON-NLS-1$
+        {
+            @Override
+            protected IStatus run(IProgressMonitor monitor)
+            {
+                try
+                {
+                    boolean staged = hasStagedChanges(repository);
+                    Display.getDefault().asyncExec(() ->
+                    {
+                        if (button.isDisposed())
+                            return;
+                        button.setData(CHECKING, null);
+                        if (!view.getSite().getShell().isDisposed()
+                            && repository.equals(currentRepository(view)))
+                            continueClicked(view, button, commit, enable, repository, staged);
+                    });
+                }
+                catch (GitAPIException | RuntimeException e)
+                {
+                    Display.getDefault().asyncExec(() ->
+                    {
+                        if (button.isDisposed())
+                            return;
+                        button.setData(CHECKING, null);
+                        if (!view.getSite().getShell().isDisposed())
+                            MessageDialog.openError(view.getSite().getShell(), "Git Flow", //$NON-NLS-1$
+                                "Не удалось проверить подготовленные изменения: " + e.getMessage()); //$NON-NLS-1$
+                    });
+                }
+                return Status.OK_STATUS;
+            }
+        };
+        job.setSystem(true);
+        job.setRule(RuleUtil.getRule(repository));
+        job.schedule();
+    }
+
+    private static void continueClicked(ViewPart view, Button button, Method commit, Method enable,
+        Repository repository, boolean staged)
+    {
         try
         {
-            if (!hasStagedChanges(repository))
+            if (!staged)
             {
                 push(view, button, repository, false, false);
                 return;
@@ -147,7 +186,7 @@ final class StagingSmartPush
             if (!Boolean.TRUE.equals(commit.invoke(view, false, afterCommit)))
                 enable.invoke(view, true);
         }
-        catch (ReflectiveOperationException | GitAPIException | IOException e)
+        catch (ReflectiveOperationException | IOException e)
         {
             try
             {
@@ -221,18 +260,6 @@ final class StagingSmartPush
                 try
                 {
                     result = PullOperations.smartPush(repository, confirmed, monitor);
-                    if (result.workspaceChanged())
-                    {
-                        try
-                        {
-                            refresh(repository, monitor);
-                        }
-                        catch (CoreException e)
-                        {
-                            result = new OperationResult(OperationResult.Kind.ERROR,
-                                result.message() + " Обновить проект в EDT не удалось: " + e.getMessage()); //$NON-NLS-1$
-                        }
-                    }
                 }
                 catch (RuntimeException e)
                 {
@@ -287,13 +314,6 @@ final class StagingSmartPush
         else
             MessageDialog.openError(view.getSite().getShell(), "Git Flow", //$NON-NLS-1$
                 (committed ? "Коммит сохранён локально. " : "") + result.message()); //$NON-NLS-1$ //$NON-NLS-2$
-    }
-
-    private static void refresh(Repository repository, IProgressMonitor monitor) throws CoreException
-    {
-        for (IProject project : ResourcesPlugin.getWorkspace().getRoot().getProjects())
-            if (project.isOpen() && repository.equals(RepositorySupport.resolveFor(project)))
-                project.refreshLocal(IResource.DEPTH_INFINITE, monitor);
     }
 
     private static void log(String message, Throwable error)

@@ -6,6 +6,8 @@ import static org.junit.Assert.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
 import org.eclipse.jgit.api.Git;
 import org.junit.Test;
@@ -107,8 +109,12 @@ public class WorkingChangesTest
                 .setCommitter("Test", "test@example.org").call(); //$NON-NLS-1$ //$NON-NLS-2$
             Files.writeString(untracked, "new"); //$NON-NLS-1$
 
+            List<String> deleted = new ArrayList<>();
+            git.getRepository().getListenerList().addWorkingTreeModifiedListener(
+                event -> deleted.addAll(event.getDeleted()));
             assertTrue(WorkingChanges.deleteUntrackedFile(git.getRepository(), "new.txt").succeeded()); //$NON-NLS-1$
             assertFalse(Files.exists(untracked));
+            assertEquals(List.of("new.txt"), deleted); //$NON-NLS-1$
             assertEquals(dev.edt.gitflow.core.OperationResult.Kind.ERROR,
                 WorkingChanges.deleteUntrackedFile(git.getRepository(), "tracked.txt").kind()); //$NON-NLS-1$
             assertEquals("base", Files.readString(tracked)); //$NON-NLS-1$
@@ -182,11 +188,15 @@ public class WorkingChangesTest
             git.add().addFilepattern("staged-new.txt").call(); //$NON-NLS-1$
             Files.writeString(untracked, "keep"); //$NON-NLS-1$
 
+            List<String> removed = new ArrayList<>();
+            git.getRepository().getListenerList().addWorkingTreeModifiedListener(
+                event -> removed.addAll(event.getDeleted()));
             assertTrue(WorkingChanges.discardAllChanges(git.getRepository()).succeeded());
             assertEquals("base", Files.readString(tracked)); //$NON-NLS-1$
             assertEquals("base", Files.readString(deleted)); //$NON-NLS-1$
             assertFalse(Files.exists(stagedNew));
             assertFalse(Files.exists(untracked));
+            assertTrue(removed.containsAll(List.of("staged-new.txt", "untracked.txt"))); //$NON-NLS-1$ //$NON-NLS-2$
             WorkingChanges changes = WorkingChanges.read(git.getRepository());
             assertTrue(changes.staged().isEmpty());
             assertTrue(changes.unstaged().isEmpty());

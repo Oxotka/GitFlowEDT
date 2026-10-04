@@ -1,8 +1,5 @@
 package dev.edt.gitflow.ui.handlers;
 
-import org.eclipse.core.commands.AbstractHandler;
-import org.eclipse.core.commands.ExecutionEvent;
-import org.eclipse.core.resources.IResource;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.Status;
@@ -17,26 +14,12 @@ import org.eclipse.swt.program.Program;
 import org.eclipse.swt.widgets.Display;
 
 import dev.edt.gitflow.core.GitLinks;
-import dev.edt.gitflow.core.RepositorySupport;
 import dev.edt.gitflow.ui.views.GitFlowView;
 
-public abstract class OpenLinkHandler extends AbstractHandler
+public final class OpenLinkHandler
 {
-    protected abstract GitLinks.Target target();
-
-    @Override
-    public Object execute(ExecutionEvent event)
+    private OpenLinkHandler()
     {
-        Repository repository = Repositories.select(event);
-        if (repository == null)
-        {
-            GitFlowView.publish(Messages.get("selectResource")); //$NON-NLS-1$
-            return null;
-        }
-        IResource resource = Repositories.selectedResource(event);
-        String path = target() == GitLinks.Target.FILE ? RepositorySupport.relativePath(resource) : null;
-        open(repository, target(), path);
-        return null;
     }
 
     public static void open(Repository repository, GitLinks.Target target, String path)

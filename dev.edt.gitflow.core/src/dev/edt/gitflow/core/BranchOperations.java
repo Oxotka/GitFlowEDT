@@ -9,12 +9,10 @@ import org.eclipse.jgit.api.CreateBranchCommand.SetupUpstreamMode;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.ResetCommand.ResetType;
 import org.eclipse.jgit.api.errors.GitAPIException;
-import org.eclipse.jgit.lib.BranchConfig;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
-import org.eclipse.jgit.revwalk.RevWalk;
 
 import dev.edt.gitflow.core.OperationResult.Kind;
 
@@ -140,46 +138,4 @@ public final class BranchOperations
         }
     }
 
-    public static OperationResult undoLastCommit(Repository repository, boolean keepStaged,
-        boolean confirmPushed, IProgressMonitor monitor)
-    {
-        if (!RepositorySupport.isSafe(repository))
-            return new OperationResult(Kind.ERROR, "Репозиторий занят другой Git-операцией."); //$NON-NLS-1$
-        monitor.beginTask("Отмена последнего коммита", 1); //$NON-NLS-1$
-        try (RevWalk walk = new RevWalk(repository))
-        {
-            ObjectId headId = repository.resolve("HEAD"); //$NON-NLS-1$
-            if (headId == null)
-                return new OperationResult(Kind.ERROR, "В ветке нет коммитов."); //$NON-NLS-1$
-            RevCommit head = walk.parseCommit(headId);
-            if (head.getParentCount() != 1)
-                return new OperationResult(Kind.ERROR,
-                    "Корневой или merge-коммит нельзя отменить этой командой."); //$NON-NLS-1$
-            if (isPushed(repository, head, walk) && !confirmPushed)
-                return new OperationResult(Kind.NEEDS_CONFIRMATION,
-                    "Коммит уже отправлен. Отмена изменит историю ветки и для повторной отправки потребуется force push."); //$NON-NLS-1$
-            Git.wrap(repository).reset().setMode(keepStaged ? ResetType.SOFT : ResetType.MIXED)
-                .setRef(head.getParent(0).getId().name()).call();
-            monitor.worked(1);
-            return new OperationResult(Kind.SUCCESS,
-                "Коммит «" + head.getShortMessage() + "» отменён; изменения " //$NON-NLS-1$ //$NON-NLS-2$
-                    + (keepStaged ? "оставлены в индексе." : "возвращены в рабочую область.")); //$NON-NLS-1$ //$NON-NLS-2$
-        }
-        catch (GitAPIException | IOException e)
-        {
-            return new OperationResult(Kind.ERROR, e.getMessage());
-        }
-        finally
-        {
-            monitor.done();
-        }
-    }
-
-    static boolean isPushed(Repository repository, RevCommit head, RevWalk walk) throws IOException
-    {
-        BranchConfig branch = new BranchConfig(repository.getConfig(), repository.getBranch());
-        String tracking = branch.getRemoteTrackingBranch();
-        ObjectId remoteId = tracking == null ? null : repository.resolve(tracking);
-        return remoteId != null && walk.isMergedInto(head, walk.parseCommit(remoteId));
-    }
 }

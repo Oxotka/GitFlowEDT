@@ -4,9 +4,7 @@ import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.ArrayList;
 
-import org.eclipse.core.commands.ExecutionEvent;
-import org.eclipse.core.resources.ResourcesPlugin;
-import org.eclipse.core.runtime.CoreException;
+import org.eclipse.egit.core.internal.job.RuleUtil;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.ProgressMonitorWrapper;
 import org.eclipse.core.runtime.IStatus;
@@ -20,10 +18,8 @@ import org.eclipse.egit.ui.internal.UIRepositoryUtils;
 import org.eclipse.egit.ui.internal.UIText;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Shell;
-import org.eclipse.ui.handlers.HandlerUtil;
 
 import dev.edt.gitflow.core.OperationResult;
-import dev.edt.gitflow.core.RepositorySupport;
 import dev.edt.gitflow.ui.views.GitFlowView;
 
 public final class OperationJob
@@ -34,49 +30,17 @@ public final class OperationJob
     {
     }
 
-    static void schedule(ExecutionEvent event, String title,
-        BiFunction<Repository, IProgressMonitor, OperationResult> operation)
-    {
-        schedule(event, title, operation, null);
-    }
-
-    static void schedule(ExecutionEvent event, String title,
-        BiFunction<Repository, IProgressMonitor, OperationResult> operation,
-        BiFunction<Repository, IProgressMonitor, OperationResult> confirmedOperation)
-    {
-        Repository repository = Repositories.select(event);
-        if (repository == null)
-        {
-            GitFlowView.publish(Messages.get("selectResource")); //$NON-NLS-1$
-            return;
-        }
-        schedule(repository, HandlerUtil.getActiveShell(event), title, operation, confirmedOperation);
-    }
-
     public static void schedule(Repository repository, Shell shell, String title,
         BiFunction<Repository, IProgressMonitor, OperationResult> operation,
         BiFunction<Repository, IProgressMonitor, OperationResult> confirmedOperation)
     {
-        schedule(repository, shell, title, operation, confirmedOperation, true);
-    }
-
-    /**
-     * @param refreshWorkspace {@code false} для операций, меняющих только индекс
-     *            (stage/unstage/commit): рабочая копия не тронута, и широкое
-     *            {@code refreshLocal} лишь рассылает лишние события workspace.
-     */
-    public static void schedule(Repository repository, Shell shell, String title,
-        BiFunction<Repository, IProgressMonitor, OperationResult> operation,
-        BiFunction<Repository, IProgressMonitor, OperationResult> confirmedOperation,
-        boolean refreshWorkspace)
-    {
-        schedule(repository, shell, title, operation, confirmedOperation, refreshWorkspace, null);
+        schedule(repository, shell, title, operation, confirmedOperation, null);
     }
 
     public static void schedule(Repository repository, Shell shell, String title,
         BiFunction<Repository, IProgressMonitor, OperationResult> operation,
         BiFunction<Repository, IProgressMonitor, OperationResult> confirmedOperation,
-        boolean refreshWorkspace, Consumer<OperationResult> completionAction)
+        Consumer<OperationResult> completionAction)
     {
         if (GitFlowView.isRunning(repository))
         {
@@ -133,19 +97,6 @@ public final class OperationJob
                     }
                 });
                 completion[0] = result;
-                if (refreshWorkspace && result.workspaceChanged())
-                {
-                    try
-                    {
-                        Repositories.refresh(repository, monitor);
-                    }
-                    catch (CoreException e)
-                    {
-                        completion[0] = new OperationResult(OperationResult.Kind.ERROR,
-                            result.message() + " Обновить проект в EDT не удалось: " + e.getMessage()); //$NON-NLS-1$
-                        return e.getStatus();
-                    }
-                }
                 if (!result.succeeded() && result.kind() != OperationResult.Kind.NEEDS_CONFIRMATION
                     && result.kind() != OperationResult.Kind.NEEDS_NATIVE_MERGE
                     && result.kind() != OperationResult.Kind.NEEDS_CHECKOUT_CLEANUP)
@@ -153,7 +104,7 @@ public final class OperationJob
                 return Status.OK_STATUS;
             }
         };
-        job.setRule(ResourcesPlugin.getWorkspace().getRoot());
+        job.setRule(RuleUtil.getRule(repository));
         job.addJobChangeListener(new JobChangeAdapter()
         {
             @Override
@@ -170,7 +121,7 @@ public final class OperationJob
                                 UIText.BranchResultDialog_CheckoutConflictsTitle, shell);
                             if (retry)
                                 schedule(repository, shell, title, operation, confirmedOperation,
-                                    refreshWorkspace, completionAction);
+                                    completionAction);
                             return;
                         }
                         if (completion[0].kind() == OperationResult.Kind.NEEDS_CONFIRMATION
@@ -179,7 +130,7 @@ public final class OperationJob
                             if (shell != null && !shell.isDisposed()
                                 && MessageDialog.openQuestion(shell, title, completion[0].message()))
                                 schedule(repository, shell, title, confirmedOperation, null,
-                                    refreshWorkspace, completionAction);
+                                    completionAction);
                             else
                                 GitFlowView.publishStatus(title + Messages.get("operationCancelled"),
                                     Messages.get("operationCancelledShort")); //$NON-NLS-1$
@@ -227,46 +178,4 @@ public final class OperationJob
         return "Выполняется операция…"; //$NON-NLS-1$
     }
 
-    static void scheduleAll(ExecutionEvent event)
-    {
-        String[] completion = new String[1];
-        Job job = new Job(Messages.get("pullAllJob")) //$NON-NLS-1$
-        {
-            @Override
-            protected IStatus run(IProgressMonitor monitor)
-            {
-                StringBuilder report = new StringBuilder();
-                for (Repository repository : RepositorySupport.allRepositories())
-                {
-                    monitor.subTask(repository.getWorkTree().getName());
-                    OperationResult result = dev.edt.gitflow.core.PullOperations.smartPull(repository, monitor);
-                    report.append(repository.getWorkTree().getName()).append(": ") //$NON-NLS-1$
-                        .append(result.message()).append('\n');
-                    try
-                    {
-                        if (result.workspaceChanged())
-                            Repositories.refresh(repository, monitor);
-                    }
-                    catch (CoreException e)
-                    {
-                        report.append("Обновление проекта: ").append(e.getMessage()).append('\n'); //$NON-NLS-1$
-                    }
-                }
-                completion[0] = report.length() == 0 ? Messages.get("noRepositories") : report.toString(); //$NON-NLS-1$
-                return Status.OK_STATUS;
-            }
-        };
-        job.setRule(ResourcesPlugin.getWorkspace().getRoot());
-        job.addJobChangeListener(new JobChangeAdapter()
-        {
-            @Override
-            public void done(IJobChangeEvent changeEvent)
-            {
-                if (completion[0] != null)
-                    GitFlowView.publish(completion[0]);
-            }
-        });
-        GitFlowView.publish(Messages.get("pullAllJob") + Messages.get("operationStarted")); //$NON-NLS-1$ //$NON-NLS-2$
-        job.schedule();
-    }
 }

@@ -4,119 +4,12 @@
    <extension point="org.eclipse.ui.startup">
       <startup class="dev.edt.gitflow.ui.views.StagingRepositoryInitializer"/>
    </extension>
-   <extension
-         point="org.eclipse.ui.commands">
-      <command
-            id="dev.edt.gitflow.ui.command.hello"
-            name="%command.hello.name">
-      </command>
-      <command id="dev.edt.gitflow.ui.command.openView" name="%command.openView.name"/>
-      <command id="dev.edt.gitflow.ui.command.quickStash" name="%command.quickStash.name"/>
-      <command id="dev.edt.gitflow.ui.command.quickPop" name="%command.quickPop.name"/>
-      <command id="dev.edt.gitflow.ui.command.smartPull" name="%command.smartPull.name"/>
-      <command id="dev.edt.gitflow.ui.command.smartPush" name="%command.smartPush.name"/>
-      <command id="dev.edt.gitflow.ui.command.pullAll" name="%command.pullAll.name"/>
-      <command id="dev.edt.gitflow.ui.command.smartCheckout" name="%command.smartCheckout.name"/>
-      <command id="dev.edt.gitflow.ui.command.undoLastCommit" name="%command.undoLastCommit.name"/>
-      <command id="dev.edt.gitflow.ui.command.commitToNewBranch" name="%command.commitToNewBranch.name"/>
-      <command id="dev.edt.gitflow.ui.command.moveLastCommit" name="%command.moveLastCommit.name"/>
-      <command id="dev.edt.gitflow.ui.command.safeCommit" name="%command.safeCommit.name"/>
-      <command id="dev.edt.gitflow.ui.command.generateMessage" name="%command.generateMessage.name"/>
-      <command id="dev.edt.gitflow.ui.command.openFile" name="%command.openFile.name"/>
-      <command id="dev.edt.gitflow.ui.command.openBranch" name="%command.openBranch.name"/>
-      <command id="dev.edt.gitflow.ui.command.openCommit" name="%command.openCommit.name"/>
-   </extension>
    <extension point="org.eclipse.ui.views">
       <view id="dev.edt.gitflow.ui.view.operations"
             name="%view.operations.name"
             class="dev.edt.gitflow.ui.views.GitFlowView"
             category="dev.edt.gitflow.ui.view.category"/>
       <category id="dev.edt.gitflow.ui.view.category"
-            name="%menu.main.label"/>
-   </extension>
-   <extension
-         point="org.eclipse.ui.handlers">
-      <handler
-            class="dev.edt.gitflow.ui.handlers.HelloHandler"
-            commandId="dev.edt.gitflow.ui.command.hello">
-      </handler>
-      <handler class="dev.edt.gitflow.ui.handlers.OpenGitViewHandler"
-            commandId="dev.edt.gitflow.ui.command.openView"/>
-      <handler class="dev.edt.gitflow.ui.handlers.QuickStashHandler"
-            commandId="dev.edt.gitflow.ui.command.quickStash"/>
-      <handler class="dev.edt.gitflow.ui.handlers.QuickPopHandler"
-            commandId="dev.edt.gitflow.ui.command.quickPop"/>
-      <handler class="dev.edt.gitflow.ui.handlers.SmartPullHandler"
-            commandId="dev.edt.gitflow.ui.command.smartPull"/>
-      <handler class="dev.edt.gitflow.ui.handlers.SmartPushHandler"
-            commandId="dev.edt.gitflow.ui.command.smartPush"/>
-      <handler class="dev.edt.gitflow.ui.handlers.PullAllHandler"
-            commandId="dev.edt.gitflow.ui.command.pullAll"/>
-      <handler class="dev.edt.gitflow.ui.handlers.SmartCheckoutHandler"
-            commandId="dev.edt.gitflow.ui.command.smartCheckout"/>
-      <handler class="dev.edt.gitflow.ui.handlers.UndoLastCommitHandler"
-            commandId="dev.edt.gitflow.ui.command.undoLastCommit"/>
-      <handler class="dev.edt.gitflow.ui.handlers.CommitToNewBranchHandler"
-            commandId="dev.edt.gitflow.ui.command.commitToNewBranch"/>
-      <handler class="dev.edt.gitflow.ui.handlers.MoveLastCommitHandler"
-            commandId="dev.edt.gitflow.ui.command.moveLastCommit"/>
-      <handler class="dev.edt.gitflow.ui.handlers.SafeCommitHandler"
-            commandId="dev.edt.gitflow.ui.command.safeCommit"/>
-      <handler class="dev.edt.gitflow.ui.handlers.GenerateMessageHandler"
-            commandId="dev.edt.gitflow.ui.command.generateMessage"/>
-      <handler class="dev.edt.gitflow.ui.handlers.OpenFileLinkHandler"
-            commandId="dev.edt.gitflow.ui.command.openFile"/>
-      <handler class="dev.edt.gitflow.ui.handlers.OpenBranchLinkHandler"
-            commandId="dev.edt.gitflow.ui.command.openBranch"/>
-      <handler class="dev.edt.gitflow.ui.handlers.OpenCommitLinkHandler"
-            commandId="dev.edt.gitflow.ui.command.openCommit"/>
-   </extension>
-   <extension
-         point="org.eclipse.ui.menus">
-      <menuContribution locationURI="popup:team.main?after=org.eclipse.egit.ui.pullPushSeparator">
-         <command commandId="dev.edt.gitflow.ui.command.smartPull"
-               label="%command.smartPull.teamLabel">
-            <visibleWhen checkEnabled="false">
-               <test property="GitSelection.projectsSingleRepository"/>
-            </visibleWhen>
-         </command>
-         <command commandId="dev.edt.gitflow.ui.command.smartPush"
-               label="%command.smartPush.teamLabel">
-            <visibleWhen checkEnabled="false">
-               <test property="GitSelection.projectsSingleRepository"/>
-            </visibleWhen>
-         </command>
-         <command commandId="dev.edt.gitflow.ui.command.smartCheckout">
-            <visibleWhen checkEnabled="false">
-               <test property="GitSelection.projectsSingleRepository"/>
-            </visibleWhen>
-         </command>
-      </menuContribution>
-      <menuContribution
-            locationURI="menu:org.eclipse.ui.main.menu?after=project">
-         <menu
-               id="dev.edt.gitflow.ui.mainMenu"
-               label="%menu.main.label"
-               mnemonic="G">
-            <command commandId="dev.edt.gitflow.ui.command.openView"/>
-            <menu id="dev.edt.gitflow.ui.moreMenu" label="%menu.more.label">
-            <command commandId="dev.edt.gitflow.ui.command.quickStash"/>
-            <command commandId="dev.edt.gitflow.ui.command.quickPop"/>
-            <command commandId="dev.edt.gitflow.ui.command.smartPull"/>
-            <command commandId="dev.edt.gitflow.ui.command.smartPush"/>
-            <command commandId="dev.edt.gitflow.ui.command.pullAll"/>
-            <command commandId="dev.edt.gitflow.ui.command.smartCheckout"/>
-            <command commandId="dev.edt.gitflow.ui.command.undoLastCommit"/>
-            <command commandId="dev.edt.gitflow.ui.command.commitToNewBranch"/>
-            <command commandId="dev.edt.gitflow.ui.command.moveLastCommit"/>
-            <command commandId="dev.edt.gitflow.ui.command.safeCommit"/>
-            <command commandId="dev.edt.gitflow.ui.command.generateMessage"/>
-            <command commandId="dev.edt.gitflow.ui.command.openFile"/>
-            <command commandId="dev.edt.gitflow.ui.command.openBranch"/>
-            <command commandId="dev.edt.gitflow.ui.command.openCommit"/>
-            </menu>
-            <command commandId="dev.edt.gitflow.ui.command.hello"/>
-         </menu>
-      </menuContribution>
+            name="%view.category.name"/>
    </extension>
 </plugin>

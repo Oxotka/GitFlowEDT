@@ -3,13 +3,13 @@ package dev.edt.gitflow.ui.handlers;
 import org.eclipse.core.commands.ExecutionEvent;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
-import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.Status;
 import org.eclipse.core.runtime.jobs.Job;
 import org.eclipse.core.runtime.jobs.IJobChangeEvent;
 import org.eclipse.core.runtime.jobs.JobChangeAdapter;
+import org.eclipse.egit.core.internal.job.RuleUtil;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Shell;
@@ -42,7 +42,6 @@ final class EdtBranchWizardWorkflow
     private final ISelection previousSelection;
     private Result stashResult;
     private Result restoreResult;
-    private String restoreError;
 
     private EdtBranchWizardWorkflow(Repository repository, IProject project,
         IWorkbenchWindow window, ISelectionProvider selectionProvider)
@@ -105,7 +104,7 @@ final class EdtBranchWizardWorkflow
                 return Status.OK_STATUS;
             }
         };
-        job.setRule(ResourcesPlugin.getWorkspace().getRoot());
+        job.setRule(RuleUtil.getRule(repository));
         job.addJobChangeListener(new JobChangeAdapter()
         {
             @Override
@@ -165,20 +164,11 @@ final class EdtBranchWizardWorkflow
             protected IStatus run(IProgressMonitor monitor)
             {
                 restoreResult = StashOperations.applyAndDrop(repository, stashId);
-                try
-                {
-                    Repositories.refresh(repository, monitor);
-                }
-                catch (CoreException e)
-                {
-                    restoreError = e.getMessage();
-                    return e.getStatus();
-                }
                 return Status.OK_STATUS;
             }
         };
         job.setSystem(true);
-        job.setRule(ResourcesPlugin.getWorkspace().getRoot());
+        job.setRule(RuleUtil.getRule(repository));
         job.addJobChangeListener(new JobChangeAdapter()
         {
             @Override
@@ -192,11 +182,9 @@ final class EdtBranchWizardWorkflow
                     else if (restoreResult != null)
                         message = append(message, Messages.get("branchWizardRestoreFailed") //$NON-NLS-1$
                             + " " + restoreResult.detail() + " [" + stashId + "]"); //$NON-NLS-1$ //$NON-NLS-2$
-                    if (restoreError != null)
-                        message = append(message, restoreError);
                     if (message == null)
                         message = Messages.get("branchWizardRestored"); //$NON-NLS-1$
-                    if (!event.getResult().isOK() && restoreError == null)
+                    if (!event.getResult().isOK())
                         message = append(message, event.getResult().getMessage());
                     finish(message);
                 });
