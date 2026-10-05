@@ -43,6 +43,17 @@ public class RecentHistoryTest
             assertTrue(branchHistory.get(0).labels().contains(currentBranch));
             assertFalse(branchHistory.get(0).labels().contains("HEAD")); //$NON-NLS-1$
             assertTrue(branchHistory.get(1).labels().isEmpty());
+            var remote = git.getRepository().updateRef(Constants.R_REMOTES + "origin/vendor"); //$NON-NLS-1$
+            remote.setNewObjectId(git.getRepository().resolve("HEAD~1")); //$NON-NLS-1$
+            remote.update();
+            git.branchCreate().setName("vendor").setStartPoint("HEAD~1").call(); //$NON-NLS-1$ //$NON-NLS-2$
+            git.tag().setName("release").setObjectId(git.getRepository().parseCommit(
+                git.getRepository().resolve("HEAD~1"))).setAnnotated(true).setMessage("Release").call();
+            var decorated = RecentHistory.read(git.getRepository(), 10);
+            assertEquals(3, decorated.size());
+            assertTrue(decorated.get(1).labels().contains("origin/vendor")); //$NON-NLS-1$
+            assertTrue(decorated.get(1).labels().contains("release"));
+            assertTrue(decorated.get(1).labels().contains("vendor")); //$NON-NLS-1$
             var entries = RecentHistory.read(git.getRepository(), 2);
             assertEquals(2, entries.size());
             assertEquals("Commit 2", entries.get(0).subject()); //$NON-NLS-1$

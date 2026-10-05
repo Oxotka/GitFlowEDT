@@ -12,4 +12,12 @@
       <category id="dev.edt.gitflow.ui.view.category"
             name="%view.category.name"/>
    </extension>
+   <extension point="org.eclipse.ui.perspectiveExtensions">
+      <perspectiveExtension targetID="org.eclipse.egit.ui.GitRepositoryExploring">
+         <view id="dev.edt.gitflow.ui.view.operations"
+               relative="org.eclipse.egit.ui.RepositoriesView"
+               relationship="stack"
+               visible="true"/>
+      </perspectiveExtension>
+   </extension>
 </plugin>

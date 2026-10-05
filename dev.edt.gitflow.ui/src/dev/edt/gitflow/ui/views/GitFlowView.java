@@ -282,6 +282,13 @@ public class GitFlowView extends ViewPart
         messageLayout.marginHeight = 0;
         messageArea.setLayout(messageLayout);
         messageField = new Text(messageArea, SWT.BORDER | SWT.MULTI | SWT.WRAP | SWT.V_SCROLL);
+        messageField.addPaintListener(event ->
+        {
+            var background = messageField.getBackground().getRGB();
+            if (background.red + background.green + background.blue < 384
+                && background.red + background.green + background.blue > 0)
+                messageField.setBackground(messageField.getDisplay().getSystemColor(SWT.COLOR_BLACK));
+        });
         messageField.setMessage(Messages.get("commitMessage")); //$NON-NLS-1$
         GridData messageData = new GridData(SWT.FILL, SWT.FILL, true, true);
         messageData.heightHint = messageField.getLineHeight() * 2 + 8;
@@ -886,6 +893,8 @@ public class GitFlowView extends ViewPart
     }
 
     private boolean syncingStagingMessage;
+    private org.eclipse.swt.custom.StyledText stagingMessageText;
+    private final org.eclipse.swt.events.ModifyListener stagingMessageListener = event -> syncStagingMessage(false);
 
     static void stagingMessageAvailable()
     {
@@ -924,10 +933,12 @@ public class GitFlowView extends ViewPart
             var text = (org.eclipse.swt.custom.StyledText) area.getClass().getMethod("getTextWidget").invoke(area); //$NON-NLS-1$
             if (text.isDisposed())
                 return;
-            if (text.getData("gitflow.messageSync") != this) //$NON-NLS-1$
+            if (stagingMessageText != text)
             {
-                text.setData("gitflow.messageSync", this); //$NON-NLS-1$
-                text.addModifyListener(event -> syncStagingMessage(false));
+                if (stagingMessageText != null && !stagingMessageText.isDisposed())
+                    stagingMessageText.removeModifyListener(stagingMessageListener);
+                stagingMessageText = text;
+                text.addModifyListener(stagingMessageListener);
             }
             syncingStagingMessage = true;
             if (publish)
@@ -1244,10 +1255,18 @@ public class GitFlowView extends ViewPart
             indexDiffEntry.removeIndexDiffChangedListener(indexDiffListener);
             indexDiffEntry = null;
         }
+        if (refsListener != null)
+            refsListener.remove();
+        refsListener = null;
         indexObservedRepository = repository;
         indexDiffData = null;
         if (repository != null)
         {
+            refsListener = repository.getListenerList().addRefsChangedListener(event -> onUi(() ->
+            {
+                if (instance == GitFlowView.this && sameRepository(selectedRepository(), repository))
+                    scheduleRefresh(0);
+            }));
             indexDiffEntry = IndexDiffCache.INSTANCE.getIndexDiffCacheEntry(repository);
             indexDiffEntry.addIndexDiffChangedListener(indexDiffListener);
             indexDiffData = indexDiffEntry.getIndexDiff();
@@ -1261,6 +1280,8 @@ public class GitFlowView extends ViewPart
         return first == second || first != null && second != null
             && first.getDirectory().equals(second.getDirectory());
     }
+
+    private org.eclipse.jgit.events.ListenerHandle refsListener;
 
     private void indexDiffChanged(Repository repository, IndexDiffData data)
     {
@@ -1605,10 +1626,9 @@ public class GitFlowView extends ViewPart
     private ChangeDisplay displayChangePath(String path)
     {
         String relative = path.replace('\\', '/'); //$NON-NLS-1$
-        if (relative.startsWith("bp3/src/")) //$NON-NLS-1$
-            relative = relative.substring("bp3/src/".length()); //$NON-NLS-1$
-        else if (relative.startsWith("src/")) //$NON-NLS-1$
-            relative = relative.substring("src/".length()); //$NON-NLS-1$
+        int sourceRoot = ("/" + relative).indexOf("/src/"); //$NON-NLS-1$ //$NON-NLS-2$
+        if (sourceRoot >= 0)
+            relative = relative.substring(sourceRoot + "src/".length()); //$NON-NLS-1$
 
         if ("Configuration.xml".equals(relative)) //$NON-NLS-1$
             return namedChange("Configuration", "metadataConfiguration", "configuration"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
@@ -2309,6 +2329,12 @@ public class GitFlowView extends ViewPart
         });
         metadataImages.clear();
         instance = null;
+        if (refsListener != null)
+            refsListener.remove();
+        refsListener = null;
+        if (stagingMessageText != null && !stagingMessageText.isDisposed())
+            stagingMessageText.removeModifyListener(stagingMessageListener);
+        stagingMessageText = null;
         super.dispose();
     }
 

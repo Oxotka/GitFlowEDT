@@ -7,8 +7,19 @@ import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.Platform;
 import org.eclipse.core.runtime.Status;
 import org.eclipse.jgit.lib.Repository;
+import org.eclipse.e4.ui.model.application.ui.basic.MPartStack;
+import org.eclipse.e4.ui.model.application.ui.basic.MStackElement;
+import org.eclipse.e4.ui.model.application.MApplication;
+import org.eclipse.e4.ui.model.application.ui.basic.MWindow;
+import org.eclipse.e4.ui.model.application.ui.MUIElement;
+import org.eclipse.e4.ui.model.application.ui.advanced.MPerspective;
+import org.eclipse.e4.ui.model.application.ui.advanced.MPlaceholder;
+import org.eclipse.e4.ui.workbench.modeling.EModelService;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.ui.IPartListener2;
+import org.eclipse.ui.IPerspectiveDescriptor;
+import org.eclipse.ui.IWorkbenchPage;
+import org.eclipse.ui.PerspectiveAdapter;
 import org.eclipse.ui.IStartup;
 import org.eclipse.ui.IWindowListener;
 import org.eclipse.ui.IWorkbenchPartReference;
@@ -23,6 +34,66 @@ public class StagingRepositoryInitializer implements IStartup
 {
     private static final String STAGING_VIEW = "org.eclipse.egit.ui.StagingView"; //$NON-NLS-1$
     private static final String PLUGIN_ID = "dev.edt.gitflow.ui"; //$NON-NLS-1$
+    private static final String GIT_PERSPECTIVE = "org.eclipse.egit.ui.GitRepositoryExploring"; //$NON-NLS-1$
+
+    private final PerspectiveAdapter perspectives = new PerspectiveAdapter()
+    {
+        @Override
+        public void perspectiveOpened(IWorkbenchPage page, IPerspectiveDescriptor perspective)
+        {
+            arrangeGitViews(page, perspective);
+        }
+
+        @Override
+        public void perspectiveChanged(IWorkbenchPage page, IPerspectiveDescriptor perspective, String changeId)
+        {
+            if (IWorkbenchPage.CHANGE_RESET_COMPLETE.equals(changeId))
+                arrangeGitViews(page, perspective);
+        }
+    };
+
+    private void arrangeGitViews(IWorkbenchPage page, IPerspectiveDescriptor perspective)
+    {
+        if (!GIT_PERSPECTIVE.equals(perspective.getId()))
+            return;
+        Display.getDefault().asyncExec(() ->
+        {
+            EModelService models = PlatformUI.getWorkbench().getService(EModelService.class);
+            MApplication application = PlatformUI.getWorkbench().getService(MApplication.class);
+            if (models == null || application == null)
+                return;
+            MWindow modelWindow = models.findElements(application, null, MWindow.class, null).stream()
+                .filter(window -> window.getWidget() == page.getWorkbenchWindow().getShell())
+                .findFirst().orElse(null);
+            if (modelWindow == null)
+                return;
+            for (MPerspective layout : models.findElements(modelWindow, GIT_PERSPECTIVE,
+                MPerspective.class, null))
+            {
+                MStackElement repositories = findTab(models, layout, "org.eclipse.egit.ui.RepositoriesView"); //$NON-NLS-1$
+                MStackElement git = findTab(models, layout, "dev.edt.gitflow.ui.view.operations"); //$NON-NLS-1$
+                if (repositories != null && git != null
+                    && (Object) repositories.getParent() instanceof MPartStack left
+                    && left.equals(git.getParent()) && left.getChildren().indexOf(git) > 0)
+                {
+                    left.getChildren().remove(git);
+                    left.getChildren().add(0, git);
+                    left.setSelectedElement(git);
+                }
+            }
+        });
+    }
+
+    private static MStackElement findTab(EModelService models, MUIElement root, String viewId)
+    {
+        for (MStackElement tab : models.findElements(root, null, MStackElement.class, null))
+        {
+            MUIElement view = tab instanceof MPlaceholder placeholder ? placeholder.getRef() : tab;
+            if (view != null && viewId.equals(view.getElementId()))
+                return tab;
+        }
+        return null;
+    }
 
     private final IPartListener2 parts = new IPartListener2()
     {
@@ -59,6 +130,7 @@ public class StagingRepositoryInitializer implements IStartup
                 public void windowClosed(IWorkbenchWindow window)
                 {
                     window.getPartService().removePartListener(parts);
+                    window.removePerspectiveListener(perspectives);
                 }
 
                 @Override
@@ -77,6 +149,7 @@ public class StagingRepositoryInitializer implements IStartup
     private void watch(IWorkbenchWindow window)
     {
         window.getPartService().addPartListener(parts);
+        window.addPerspectiveListener(perspectives);
         for (var page : window.getPages())
             for (var view : page.getViewReferences())
                 initializeLater(view);
