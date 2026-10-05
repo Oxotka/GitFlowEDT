@@ -95,6 +95,7 @@ public class StagingRepositoryInitializer implements IStartup
             return;
         if (view instanceof ViewPart viewPart)
             StagingSmartPush.attach(viewPart);
+        GitFlowView.stagingMessageAvailable();
         try
         {
             if (view.getClass().getMethod("getCurrentRepository").invoke(view) != null) //$NON-NLS-1$

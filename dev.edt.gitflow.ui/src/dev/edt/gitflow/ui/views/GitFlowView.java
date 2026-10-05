@@ -17,10 +17,14 @@ import java.util.Objects;
 import java.util.Set;
 
 import org.eclipse.core.resources.IFile;
+import org.eclipse.core.resources.IProject;
+import org.eclipse.core.expressions.IEvaluationContext;
+import org.eclipse.core.expressions.EvaluationContext;
 import org.eclipse.core.resources.IResourceChangeEvent;
 import org.eclipse.core.resources.IResourceChangeListener;
 import org.eclipse.core.resources.IResourceDelta;
 import org.eclipse.core.resources.ResourcesPlugin;
+import org.eclipse.core.filesystem.EFS;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IPath;
 import org.eclipse.core.runtime.IStatus;
@@ -81,6 +85,8 @@ import org.eclipse.swt.widgets.Tree;
 import org.eclipse.swt.widgets.TreeColumn;
 import org.eclipse.swt.widgets.TreeItem;
 import org.eclipse.ui.ISharedImages;
+import org.eclipse.ui.ISources;
+import org.eclipse.ui.commands.ICommandService;
 import org.eclipse.ui.ISelectionListener;
 import org.eclipse.ui.IWorkbenchPage;
 import org.eclipse.ui.IWorkbenchPart;
@@ -107,6 +113,11 @@ import dev.edt.gitflow.ui.handlers.OperationJob;
 import dev.edt.gitflow.ui.handlers.Repositories;
 import dev.edt.gitflow.ui.handlers.SmartCheckoutHandler;
 import org.eclipse.egit.ui.internal.branch.BranchOperationUI;
+import org.eclipse.egit.ui.internal.CompareUtils;
+import org.eclipse.egit.ui.internal.merge.GitMergeEditorInput;
+import org.eclipse.egit.ui.internal.merge.MergeInputMode;
+import org.eclipse.egit.ui.internal.revision.GitCompareFileRevisionEditorInput;
+import org.eclipse.egit.ui.internal.synchronize.compare.LocalNonWorkspaceTypedElement;
 import org.eclipse.egit.ui.internal.actions.ResetMenu;
 import org.eclipse.egit.ui.internal.dialogs.CompareTreeView;
 import org.eclipse.egit.ui.internal.dialogs.CreateTagDialog;
@@ -281,6 +292,7 @@ public class GitFlowView extends ViewPart
             if (!settingMergeMessage && repositoryState == RepositoryState.MERGING_RESOLVED)
                 mergeMessageEdited = true;
             updatePrimary();
+            syncStagingMessage(true);
         });
         messageField.addListener(SWT.KeyDown, event ->
         {
@@ -565,7 +577,8 @@ public class GitFlowView extends ViewPart
                 boolean staged = Boolean.TRUE.equals(item.getParentItem().getData());
                 menuItem(menu, Messages.get("openChanges"), () -> openDiff(change.path(), staged)); //$NON-NLS-1$
                 MenuItem open = menuItem(menu, Messages.get("openFile"), () -> openFile(change.path())); //$NON-NLS-1$
-                open.setEnabled(workspaceFile(change.path()) != null && !"D".equals(change.state())); //$NON-NLS-1$
+                open.setEnabled(repository != null
+                    && new File(repository.getWorkTree(), change.path()).isFile());
                 String remote = repository == null ? null
                     : repository.getConfig().getString("remote", "origin", "url"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
                 String provider = GitLinks.providerName(remote);
@@ -828,6 +841,11 @@ public class GitFlowView extends ViewPart
                 : "Открыть коммит в " + provider, //$NON-NLS-1$
                 () -> openCommitLink(entry.hash(), remote));
         new MenuItem(menu, SWT.SEPARATOR);
+        if (historyHead != null && entry.hash().equals(historyHead.name()))
+        {
+            historyItem(menu, Messages.get("mergeBranch"), () -> mergeBranch(repository)) //$NON-NLS-1$
+                .setEnabled(!isRunning(repository));
+        }
         historyItem(menu, "Переключиться на коммит (без ветки)", //$NON-NLS-1$
             () -> BranchOperationUI.checkout(repository, entry.hash(), true).start());
         historyItem(menu, "Создать ветку…", //$NON-NLS-1$
@@ -865,6 +883,101 @@ public class GitFlowView extends ViewPart
         item.setText(label);
         item.addListener(SWT.Selection, event -> action.run());
         return item;
+    }
+
+    private boolean syncingStagingMessage;
+
+    static void stagingMessageAvailable()
+    {
+        if (instance != null)
+            instance.syncStagingMessage(false);
+    }
+
+    private void syncStagingMessage(boolean publish)
+    {
+        if (syncingStagingMessage || messageField == null || messageField.isDisposed())
+            return;
+        var view = getSite().getPage().findView("org.eclipse.egit.ui.StagingView"); //$NON-NLS-1$
+        if (view == null)
+            return;
+        try
+        {
+            Repository repository = (Repository) view.getClass().getMethod("getCurrentRepository").invoke(view); //$NON-NLS-1$
+            if (!sameRepository(selectedRepository(), repository))
+                return;
+            java.lang.reflect.Field field = null;
+            for (Class<?> type = view.getClass(); type != null && field == null; type = type.getSuperclass())
+                try
+                {
+                    field = type.getDeclaredField("commitMessageText"); //$NON-NLS-1$
+                }
+                catch (NoSuchFieldException e)
+                {
+                    // EDT may declare the control in the EGit base class.
+                }
+            if (field == null)
+                return;
+            field.setAccessible(true);
+            Object area = field.get(view);
+            if (area == null)
+                return;
+            var text = (org.eclipse.swt.custom.StyledText) area.getClass().getMethod("getTextWidget").invoke(area); //$NON-NLS-1$
+            if (text.isDisposed())
+                return;
+            if (text.getData("gitflow.messageSync") != this) //$NON-NLS-1$
+            {
+                text.setData("gitflow.messageSync", this); //$NON-NLS-1$
+                text.addModifyListener(event -> syncStagingMessage(false));
+            }
+            syncingStagingMessage = true;
+            if (publish)
+            {
+                if (!text.getText().equals(messageField.getText()))
+                    view.getClass().getMethod("setCommitText", String.class).invoke(view, messageField.getText()); //$NON-NLS-1$
+            }
+            else if (!messageField.getText().equals(text.getText()))
+                messageField.setText(text.getText());
+        }
+        catch (ReflectiveOperationException e)
+        {
+            org.eclipse.core.runtime.Platform.getLog(getClass()).warn("Не удалось синхронизировать сообщение коммита с Git Staging.", e); //$NON-NLS-1$
+        }
+        finally
+        {
+            syncingStagingMessage = false;
+        }
+    }
+
+    private void mergeBranch(Repository repository)
+    {
+        IProject project = null;
+        for (IProject candidate : ResourcesPlugin.getWorkspace().getRoot().getProjects())
+            if (candidate.isOpen() && repository.equals(RepositorySupport.resolveFor(candidate)))
+            {
+                project = candidate;
+                break;
+            }
+        if (project == null)
+        {
+            showFeedback(Messages.get("mergeProjectMissing")); //$NON-NLS-1$
+            return;
+        }
+        try
+        {
+            IHandlerService handlers = getSite().getService(IHandlerService.class);
+            ICommandService commands = getSite().getService(ICommandService.class);
+            StructuredSelection selection = new StructuredSelection(project);
+            IEvaluationContext context = new EvaluationContext(handlers.createContextSnapshot(false),
+                selection.toList());
+            context.addVariable(ISources.ACTIVE_CURRENT_SELECTION_NAME, selection);
+            context.addVariable(ISources.ACTIVE_MENU_SELECTION_NAME, selection);
+            handlers.executeCommandInContext(org.eclipse.core.commands.ParameterizedCommand.generateCommand(
+                commands.getCommand("org.eclipse.egit.ui.team.Merge"), Map.of()), null, context); //$NON-NLS-1$
+        }
+        catch (Exception e)
+        {
+            showFeedback(Messages.get("mergeOpenFailed") + " " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
+        }
     }
 
     private void openCommit(RecentHistory.Entry entry)
@@ -1263,6 +1376,7 @@ public class GitFlowView extends ViewPart
                             overviewHead = latestHead;
                             overviewUpstream = latestUpstream;
                             updateMergeMessage(latestState, mergeMessage);
+                            syncStagingMessage(false);
                             if (latestHistory != null)
                             {
                                 historyHead = latestHead;
@@ -1960,16 +2074,15 @@ public class GitFlowView extends ViewPart
     private void openFile(String path)
     {
         IFile file = workspaceFile(path);
-        if (file == null)
-        {
-            publish(Messages.get("fileOutsideWorkspace") + " " + path); //$NON-NLS-1$ //$NON-NLS-2$
-            return;
-        }
         try
         {
-            IDE.openEditor(getSite().getPage(), file);
+            if (file != null)
+                IDE.openEditor(getSite().getPage(), file);
+            else if (selectedRepository() != null)
+                IDE.openEditorOnFileStore(getSite().getPage(), EFS.getStore(
+                    new File(selectedRepository().getWorkTree(), path).toURI()));
         }
-        catch (PartInitException e)
+        catch (CoreException e)
         {
             publish(Messages.get("openFileFailed") + " " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
         }
@@ -2114,7 +2227,28 @@ public class GitFlowView extends ViewPart
             .findFilesForLocationURI(file.toURI());
         if (workspaceFiles.length == 0)
         {
-            publish(Messages.get("fileOutsideWorkspace") + " " + path); //$NON-NLS-1$ //$NON-NLS-2$
+            try
+            {
+                IPath location = new Path(file.getAbsolutePath());
+                String state = findState(path, staged);
+                if ("C".equals(state)) //$NON-NLS-1$
+                    CompareUtils.openInCompare(getSite().getPage(), repository,
+                        new GitMergeEditorInput(MergeInputMode.WORKTREE, location));
+                else if ("U".equals(state)) //$NON-NLS-1$
+                    openFile(path);
+                else
+                {
+                    var index = CompareUtils.getIndexTypedElement(repository, path);
+                    var left = staged ? index : new LocalNonWorkspaceTypedElement(repository, location);
+                    var right = staged ? CompareUtils.getHeadTypedElement(repository, path) : index;
+                    CompareUtils.openInCompare(getSite().getPage(), repository,
+                        new GitCompareFileRevisionEditorInput(left, right, getSite().getPage()));
+                }
+            }
+            catch (IOException | RuntimeException e)
+            {
+                publish(Messages.get("openDiffFailed") + " " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
+            }
             return;
         }
         IFile workspaceFile = workspaceFiles[0];
