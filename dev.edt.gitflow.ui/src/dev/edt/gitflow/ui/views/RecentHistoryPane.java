@@ -30,6 +30,8 @@ final class RecentHistoryPane extends Composite
     private static final String LOAD_MORE_TEXT = "Показать ещё"; //$NON-NLS-1$
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"); //$NON-NLS-1$
     private final Table table;
+    private final Color dotFill;
+    private final Color dotOutline;
     private Function<RecentHistory.Entry, Menu> menuProvider;
     private Menu contextMenu;
     private Runnable loadMoreAction;
@@ -42,6 +44,8 @@ final class RecentHistoryPane extends Composite
         layout.marginWidth = 0;
         layout.marginHeight = 0;
         setLayout(layout);
+        dotFill = new Color(getDisplay(), 220, 220, 220);
+        dotOutline = new Color(getDisplay(), 110, 110, 110);
         table = new Table(this, SWT.SINGLE | SWT.FULL_SELECTION | SWT.V_SCROLL | SWT.BORDER);
         table.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
         TableColumn content = new TableColumn(table, SWT.LEFT);
@@ -60,7 +64,7 @@ final class RecentHistoryPane extends Composite
         {
             if (event.item.getData() instanceof RecentHistory.Entry entry)
             {
-                GraphRenderer renderer = new GraphRenderer(event.gc, event.x, event.y);
+                GraphRenderer renderer = new GraphRenderer(event.gc, event.x, event.y, dotFill, dotOutline);
                 renderer.paint(entry.plot(), event.height);
                 int textX = event.x + renderer.rightExtent() + 8;
                 paintMessage(event.gc, textX, event.y + 3,
@@ -152,6 +156,8 @@ final class RecentHistoryPane extends Composite
         {
             if (contextMenu != null && !contextMenu.isDisposed())
                 contextMenu.dispose();
+            dotFill.dispose();
+            dotOutline.dispose();
         });
     }
 
@@ -308,14 +314,17 @@ final class RecentHistoryPane extends Composite
         private final GC gc;
         private final int x;
         private final int y;
-        private Color dotColor;
+        private final Color dotFill;
+        private final Color dotOutline;
         private int rightExtent;
 
-        GraphRenderer(GC gc, int x, int y)
+        GraphRenderer(GC gc, int x, int y, Color dotFill, Color dotOutline)
         {
             this.gc = gc;
             this.x = x;
             this.y = y;
+            this.dotFill = dotFill;
+            this.dotOutline = dotOutline;
         }
 
         void paint(PlotCommit<PlotLane> commit, int height)
@@ -323,9 +332,10 @@ final class RecentHistoryPane extends Composite
             Color foreground = gc.getForeground();
             Color background = gc.getBackground();
             int lineWidth = gc.getLineWidth();
-            dotColor = laneColor(commit.getLane());
+            int antialias = gc.getAntialias();
             try
             {
+                gc.setAntialias(SWT.ON);
                 paintCommit(commit, height);
             }
             finally
@@ -333,6 +343,7 @@ final class RecentHistoryPane extends Composite
                 gc.setForeground(foreground);
                 gc.setBackground(background);
                 gc.setLineWidth(lineWidth);
+                gc.setAntialias(antialias);
             }
         }
 
@@ -350,8 +361,8 @@ final class RecentHistoryPane extends Composite
         @Override
         protected Color laneColor(PlotLane lane)
         {
-            int[] colors = { SWT.COLOR_DARK_BLUE, SWT.COLOR_DARK_GREEN, SWT.COLOR_DARK_MAGENTA,
-                SWT.COLOR_DARK_CYAN };
+            int[] colors = { SWT.COLOR_DARK_BLUE, SWT.COLOR_DARK_YELLOW, SWT.COLOR_DARK_RED,
+                SWT.COLOR_DARK_GREEN };
             return gc.getDevice().getSystemColor(colors[Math.floorMod(lane.getPosition(), colors.length)]);
         }
 
@@ -368,15 +379,28 @@ final class RecentHistoryPane extends Composite
         protected void drawCommitDot(int x, int y, int width, int height)
         {
             rightExtent = Math.max(rightExtent, x + width);
-            gc.setBackground(dotColor);
-            gc.fillOval(this.x + x, this.y + y, width, height);
+            drawDot(dotOutline, dotFill, x, y, width, height);
         }
 
         @Override
         protected void drawBoundaryDot(int x, int y, int width, int height)
         {
             rightExtent = Math.max(rightExtent, x + width);
-            gc.drawOval(this.x + x, this.y + y, width, height);
+            drawDot(gc.getDevice().getSystemColor(SWT.COLOR_GRAY),
+                gc.getDevice().getSystemColor(SWT.COLOR_WHITE), x, y, width, height);
+        }
+
+        private void drawDot(Color outline, Color fill, int x, int y, int width, int height)
+        {
+            int dotX = this.x + x + 2;
+            int dotY = this.y + y + 1;
+            int dotWidth = width - 2;
+            int dotHeight = height - 2;
+            gc.setBackground(fill);
+            gc.fillOval(dotX, dotY, dotWidth, dotHeight);
+            gc.setForeground(outline);
+            gc.setLineWidth(2);
+            gc.drawOval(dotX, dotY, dotWidth, dotHeight);
         }
 
         @Override

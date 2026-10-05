@@ -7,7 +7,8 @@ public record OperationResult(Kind kind, String message, boolean workspaceChange
 {
     public enum Kind
     {
-        SUCCESS, NO_CHANGE, CONFLICT, NEEDS_CONFIRMATION, NEEDS_NATIVE_MERGE, NEEDS_CHECKOUT_CLEANUP, ERROR
+        SUCCESS, NO_CHANGE, CANCELLED, CONFLICT, NEEDS_CONFIRMATION, NEEDS_NATIVE_MERGE,
+        NEEDS_CHECKOUT_CLEANUP, ERROR
     }
 
     public OperationResult

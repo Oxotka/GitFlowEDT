@@ -86,18 +86,60 @@ public class BranchOperationsTest
         try (Git git = Git.init().setDirectory(directory.toFile()).call())
         {
             commit(git, directory, "base\n"); //$NON-NLS-1$
+            Files.writeString(directory.resolve("other.txt"), "base\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            git.add().addFilepattern("other.txt").call(); //$NON-NLS-1$
+            git.commit().setMessage("other base").call(); //$NON-NLS-1$
             String original = git.getRepository().getBranch();
             git.checkout().setCreateBranch(true).setName("other").call(); //$NON-NLS-1$
             commit(git, directory, "other\n"); //$NON-NLS-1$
             git.checkout().setName(original).call();
             Files.writeString(directory.resolve("file.txt"), "local\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            Files.writeString(directory.resolve("other.txt"), "local other\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            git.add().addFilepattern("file.txt").addFilepattern("other.txt").call(); //$NON-NLS-1$ //$NON-NLS-2$
             OperationResult result = BranchOperations.checkout(git.getRepository(), "other", false, //$NON-NLS-1$
                 new NullProgressMonitor());
             assertEquals(OperationResult.Kind.NEEDS_CHECKOUT_CLEANUP, result.kind());
             assertEquals(original, git.getRepository().getBranch());
             assertEquals("local\n", Files.readString(directory.resolve("file.txt"))); //$NON-NLS-1$ //$NON-NLS-2$
+            assertEquals("local other\n", Files.readString(directory.resolve("other.txt"))); //$NON-NLS-1$ //$NON-NLS-2$
+            assertEquals(2, WorkingChanges.read(git.getRepository()).staged().size());
             assertTrue(git.stashList().call().isEmpty());
             assertTrue(result.affectedPaths().contains("file.txt")); //$NON-NLS-1$
+            assertFalse(result.affectedPaths().contains("other.txt")); //$NON-NLS-1$
+        }
+    }
+
+    @Test
+    public void checkoutReportsBothFilesWhenBothConflict() throws Exception
+    {
+        Path directory = Files.createTempDirectory("gitflow-checkout-two-conflicts-"); //$NON-NLS-1$
+        try (Git git = Git.init().setDirectory(directory.toFile()).call())
+        {
+            commit(git, directory, "base\n"); //$NON-NLS-1$
+            Files.writeString(directory.resolve("other.txt"), "base\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            git.add().addFilepattern("other.txt").call(); //$NON-NLS-1$
+            git.commit().setMessage("other base").call(); //$NON-NLS-1$
+            String original = git.getRepository().getBranch();
+            git.checkout().setCreateBranch(true).setName("other").call(); //$NON-NLS-1$
+            Files.writeString(directory.resolve("file.txt"), "target\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            Files.writeString(directory.resolve("other.txt"), "target other\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            git.add().addFilepattern("file.txt").addFilepattern("other.txt").call(); //$NON-NLS-1$ //$NON-NLS-2$
+            git.commit().setMessage("target").call(); //$NON-NLS-1$
+            git.checkout().setName(original).call();
+            Files.writeString(directory.resolve("file.txt"), "local\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            Files.writeString(directory.resolve("other.txt"), "local other\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            git.add().addFilepattern("file.txt").addFilepattern("other.txt").call(); //$NON-NLS-1$ //$NON-NLS-2$
+
+            OperationResult result = BranchOperations.checkout(git.getRepository(), "other", false, //$NON-NLS-1$
+                new NullProgressMonitor());
+
+            assertEquals(OperationResult.Kind.NEEDS_CHECKOUT_CLEANUP, result.kind());
+            assertEquals(original, git.getRepository().getBranch());
+            assertEquals("local\n", Files.readString(directory.resolve("file.txt"))); //$NON-NLS-1$ //$NON-NLS-2$
+            assertEquals("local other\n", Files.readString(directory.resolve("other.txt"))); //$NON-NLS-1$ //$NON-NLS-2$
+            assertEquals(2, WorkingChanges.read(git.getRepository()).staged().size());
+            assertTrue(result.affectedPaths().contains("file.txt")); //$NON-NLS-1$
+            assertTrue(result.affectedPaths().contains("other.txt")); //$NON-NLS-1$
         }
     }
 

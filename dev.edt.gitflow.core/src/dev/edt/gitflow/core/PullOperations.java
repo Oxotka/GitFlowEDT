@@ -97,6 +97,8 @@ public final class PullOperations
         monitor.beginTask("Умное получение", 4); //$NON-NLS-1$
         try
         {
+            if (monitor.isCanceled())
+                return new OperationResult(Kind.CANCELLED, "Синхронизация отменена."); //$NON-NLS-1$
             Git git = Git.wrap(repository); // EGit owns this repository.
             BranchConfig branch = new BranchConfig(repository.getConfig(), repository.getBranch());
             String remote = branch.getRemote();
@@ -108,6 +110,8 @@ public final class PullOperations
             monitor.subTask("Получение из " + remote); //$NON-NLS-1$
             git.fetch().setRemote(remote).call();
             monitor.worked(1);
+            if (monitor.isCanceled())
+                return new OperationResult(Kind.CANCELLED, "Синхронизация отменена после fetch."); //$NON-NLS-1$
             ObjectId upstream = repository.resolve(tracking);
             if (upstream == null)
                 return new OperationResult(Kind.ERROR, "После fetch не найдена ветка " + tracking); //$NON-NLS-1$
@@ -200,7 +204,7 @@ public final class PullOperations
             String name = repository.getBranch();
             if (!confirmed)
                 return new OperationResult(Kind.NEEDS_CONFIRMATION,
-                    "У ветки " + name + " нет upstream. Найти её в origin и настроить получение?"); //$NON-NLS-1$ //$NON-NLS-2$
+                    "У ветки " + name + " не настроена связь с удалённой веткой. Найти её в origin и получать из неё изменения?"); //$NON-NLS-1$ //$NON-NLS-2$
             Git.wrap(repository).fetch().setRemote("origin").call(); //$NON-NLS-1$
             if (repository.resolve("refs/remotes/origin/" + name) == null) //$NON-NLS-1$
                 return new OperationResult(Kind.ERROR,
@@ -236,6 +240,9 @@ public final class PullOperations
         OperationResult pulled = smartPull(repository, monitor);
         if (!pulled.succeeded())
             return pulled;
+        if (monitor.isCanceled())
+            return new OperationResult(Kind.CANCELLED, "Отправка отменена до push.", //$NON-NLS-1$
+                pulled.workspaceChanged());
         try
         {
             Git git = Git.wrap(repository);
@@ -245,6 +252,9 @@ public final class PullOperations
             String merge = branch.getMerge();
             if (remote == null || merge == null)
                 return new OperationResult(Kind.ERROR, "Для отправки не настроен upstream."); //$NON-NLS-1$
+            if (monitor.isCanceled())
+                return new OperationResult(Kind.CANCELLED, "Отправка отменена до push.", //$NON-NLS-1$
+                    pulled.workspaceChanged());
             int updated = push(git, remote, name, merge);
             if (updated < 0)
                 return new OperationResult(Kind.ERROR,
@@ -273,11 +283,13 @@ public final class PullOperations
             return new OperationResult(Kind.ERROR, "Для публикации ветки настройте remote origin."); //$NON-NLS-1$
         if (!confirmed)
             return new OperationResult(Kind.NEEDS_CONFIRMATION,
-                "У ветки " + name + " нет upstream. Найти её в origin или опубликовать и настроить upstream?"); //$NON-NLS-1$ //$NON-NLS-2$
+                "У ветки " + name + " не настроена связь с удалённой веткой. Найти или создать её в origin и отправить изменения?"); //$NON-NLS-1$ //$NON-NLS-2$
         try
         {
             Git git = Git.wrap(repository);
             git.fetch().setRemote("origin").call(); //$NON-NLS-1$
+            if (monitor.isCanceled())
+                return new OperationResult(Kind.CANCELLED, "Отправка отменена до push."); //$NON-NLS-1$
             if (repository.resolve("refs/remotes/origin/" + name) != null) //$NON-NLS-1$
             {
                 configureUpstream(repository, name);

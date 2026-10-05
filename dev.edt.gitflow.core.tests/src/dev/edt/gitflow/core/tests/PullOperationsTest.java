@@ -237,6 +237,21 @@ public class PullOperationsTest
                     new NullProgressMonitor());
                 assertEquals(OperationResult.Kind.NO_CHANGE, alreadySynced.kind());
                 assertFalse(alreadySynced.workspaceChanged());
+
+                var remoteHead = origin.getRepository().resolve("HEAD"); //$NON-NLS-1$
+                commit(local, work, "later.txt", "later"); //$NON-NLS-1$ //$NON-NLS-2$
+                NullProgressMonitor cancelledAfterFetch = new NullProgressMonitor()
+                {
+                    @Override
+                    public void worked(int work)
+                    {
+                        setCanceled(true);
+                    }
+                };
+                OperationResult cancelled = PullOperations.smartPush(local.getRepository(),
+                    cancelledAfterFetch);
+                assertEquals(OperationResult.Kind.CANCELLED, cancelled.kind());
+                assertEquals(remoteHead, origin.getRepository().resolve("HEAD")); //$NON-NLS-1$
             }
         }
     }

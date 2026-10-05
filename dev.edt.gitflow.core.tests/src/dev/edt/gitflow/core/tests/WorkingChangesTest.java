@@ -165,7 +165,7 @@ public class WorkingChangesTest
     }
 
     @Test
-    public void discardAllRestoresTrackedFilesAndDeletesNewFiles() throws Exception
+    public void discardUnstagedPreservesStagedFiles() throws Exception
     {
         Path work = Files.createTempDirectory("gitflow-reset-all-"); //$NON-NLS-1$
         try (Git git = Git.init().setDirectory(work.toFile()).call())
@@ -191,14 +191,14 @@ public class WorkingChangesTest
             List<String> removed = new ArrayList<>();
             git.getRepository().getListenerList().addWorkingTreeModifiedListener(
                 event -> removed.addAll(event.getDeleted()));
-            assertTrue(WorkingChanges.discardAllChanges(git.getRepository()).succeeded());
-            assertEquals("base", Files.readString(tracked)); //$NON-NLS-1$
+            assertTrue(WorkingChanges.discardUnstagedChanges(git.getRepository()).succeeded());
+            assertEquals("staged", Files.readString(tracked)); //$NON-NLS-1$
             assertEquals("base", Files.readString(deleted)); //$NON-NLS-1$
-            assertFalse(Files.exists(stagedNew));
+            assertEquals("new", Files.readString(stagedNew)); //$NON-NLS-1$
             assertFalse(Files.exists(untracked));
-            assertTrue(removed.containsAll(List.of("staged-new.txt", "untracked.txt"))); //$NON-NLS-1$ //$NON-NLS-2$
+            assertEquals(List.of("untracked.txt"), removed); //$NON-NLS-1$
             WorkingChanges changes = WorkingChanges.read(git.getRepository());
-            assertTrue(changes.staged().isEmpty());
+            assertEquals(2, changes.staged().size());
             assertTrue(changes.unstaged().isEmpty());
         }
     }

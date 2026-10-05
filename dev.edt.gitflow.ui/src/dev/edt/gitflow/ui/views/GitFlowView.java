@@ -34,6 +34,7 @@ import org.eclipse.core.runtime.preferences.InstanceScope;
 import org.eclipse.jface.dialogs.Dialog;
 import org.eclipse.jface.dialogs.MessageDialog;
 import org.eclipse.jface.resource.ImageDescriptor;
+import org.eclipse.jface.wizard.WizardDialog;
 import org.eclipse.jface.viewers.ISelection;
 import org.eclipse.jface.viewers.ISelectionChangedListener;
 import org.eclipse.jface.viewers.ISelectionProvider;
@@ -45,12 +46,9 @@ import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.RepositoryState;
 import org.eclipse.jgit.api.ResetCommand.ResetType;
-import org.eclipse.jgit.diff.DiffEntry;
-import org.eclipse.jgit.diff.DiffFormatter;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.revwalk.filter.RevFilter;
-import org.eclipse.jgit.util.io.DisabledOutputStream;
 import dev.edt.gitflow.core.GitLinks;
 import org.eclipse.egit.core.internal.indexdiff.IndexDiffCache;
 import org.eclipse.egit.core.internal.indexdiff.IndexDiffCacheEntry;
@@ -108,10 +106,11 @@ import dev.edt.gitflow.ui.handlers.OpenLinkHandler;
 import dev.edt.gitflow.ui.handlers.OperationJob;
 import dev.edt.gitflow.ui.handlers.Repositories;
 import dev.edt.gitflow.ui.handlers.SmartCheckoutHandler;
-import org.eclipse.egit.ui.internal.CompareUtils;
 import org.eclipse.egit.ui.internal.branch.BranchOperationUI;
 import org.eclipse.egit.ui.internal.actions.ResetMenu;
+import org.eclipse.egit.ui.internal.dialogs.CompareTreeView;
 import org.eclipse.egit.ui.internal.dialogs.CreateTagDialog;
+import org.eclipse.egit.ui.internal.repository.CreateBranchWizard;
 import org.eclipse.egit.ui.internal.commit.RepositoryCommit;
 import org.eclipse.egit.ui.internal.commit.CommitEditor;
 import org.eclipse.egit.ui.internal.commit.command.CherryPickUI;
@@ -266,7 +265,12 @@ public class GitFlowView extends ViewPart
         SashForm messageSplit = new SashForm(parent, SWT.VERTICAL);
         messageSplit.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
         messageSplit.setSashWidth(4);
-        messageField = new Text(messageSplit, SWT.BORDER | SWT.MULTI | SWT.WRAP | SWT.V_SCROLL);
+        Composite messageArea = new Composite(messageSplit, SWT.NONE);
+        GridLayout messageLayout = new GridLayout(1, false);
+        messageLayout.marginWidth = 0;
+        messageLayout.marginHeight = 0;
+        messageArea.setLayout(messageLayout);
+        messageField = new Text(messageArea, SWT.BORDER | SWT.MULTI | SWT.WRAP | SWT.V_SCROLL);
         messageField.setMessage(Messages.get("commitMessage")); //$NON-NLS-1$
         GridData messageData = new GridData(SWT.FILL, SWT.FILL, true, true);
         messageData.heightHint = messageField.getLineHeight() * 2 + 8;
@@ -308,18 +312,6 @@ public class GitFlowView extends ViewPart
         settingsButton.setToolTipText(Messages.get("settings")); //$NON-NLS-1$
         settingsButton.setLayoutData(new GridData(SWT.CENTER, SWT.CENTER, false, false));
         settingsButton.addListener(SWT.Selection, event -> showSettingsMenu(settingsButton));
-        messageSplit.addListener(SWT.Resize, event ->
-        {
-            if (messageSplitInitialized)
-                return;
-            int totalHeight = messageSplit.getClientArea().height - messageSplit.getSashWidth();
-            if (totalHeight > messageData.heightHint)
-            {
-                messageSplit.setWeights(messageData.heightHint, totalHeight - messageData.heightHint);
-                messageSplitInitialized = true;
-            }
-        });
-
         SashForm content = new SashForm(lower, SWT.VERTICAL);
         content.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
         content.setSashWidth(4);
@@ -327,6 +319,45 @@ public class GitFlowView extends ViewPart
         historyPane = new RecentHistoryPane(content);
         historyPane.setMenuProvider(this::historyMenu);
         content.setWeights(70, 30);
+        messageSplit.addListener(SWT.Resize, event ->
+        {
+            Rectangle area = parent.getClientArea();
+            boolean horizontal = area.width > area.height * 3 / 2;
+            int orientation = horizontal ? SWT.HORIZONTAL : SWT.VERTICAL;
+            if (messageSplit.getOrientation() != orientation)
+            {
+                messageSplit.setOrientation(orientation);
+                content.setOrientation(orientation);
+                Composite controlsParent = horizontal ? messageArea : parent;
+                header.setParent(controlsParent);
+                repositoryCombo.setParent(controlsParent);
+                header.moveAbove(horizontal ? messageField : messageSplit);
+                repositoryCombo.moveBelow(header);
+                primaryRow.setParent(horizontal ? messageArea : lower);
+                if (horizontal)
+                    primaryRow.moveBelow(messageField);
+                else
+                    primaryRow.moveAbove(content);
+                parent.layout(true, true);
+                content.setWeights(horizontal ? new int[] {55, 45} : new int[] {70, 30});
+                if (horizontal)
+                {
+                    messageSplit.setWeights(30, 70);
+                    messageSplitInitialized = true;
+                }
+                else
+                    messageSplitInitialized = false;
+            }
+            if (!horizontal && !messageSplitInitialized)
+            {
+                int totalHeight = messageSplit.getClientArea().height - messageSplit.getSashWidth();
+                if (totalHeight > messageData.heightHint)
+                {
+                    messageSplit.setWeights(messageData.heightHint, totalHeight - messageData.heightHint);
+                    messageSplitInitialized = true;
+                }
+            }
+        });
         Composite footer = new Composite(lower, SWT.NONE);
         footer.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
         GridLayout footerLayout = new GridLayout(2, false);
@@ -408,8 +439,11 @@ public class GitFlowView extends ViewPart
             gc.drawText(text, x, event.y + Math.max(0,
                 (event.height - gc.textExtent(text).y) / 2), SWT.DRAW_TRANSPARENT);
             gc.setClipping(oldClip);
+            var foreground = gc.getForeground();
+            gc.setForeground(tree.getDisplay().getSystemColor(SWT.COLOR_DARK_GRAY));
             gc.drawText(state, stateX, event.y + Math.max(0,
                 (event.height - gc.textExtent(state).y) / 2), SWT.DRAW_TRANSPARENT);
+            gc.setForeground(foreground);
             event.doit = false;
         });
         tree.addListener(SWT.MouseMove, event ->
@@ -431,6 +465,11 @@ public class GitFlowView extends ViewPart
                     ? staged ? "unstageAll" : "stageAll" //$NON-NLS-1$ //$NON-NLS-2$
                     : staged ? "unstageFile" : "stageFile")); //$NON-NLS-1$ //$NON-NLS-2$
             }
+            else if (item.getData() instanceof FileChange change)
+            {
+                ChangeDisplay display = (ChangeDisplay) item.getData("display"); //$NON-NLS-1$
+                tree.setToolTipText(display.text() + "\n" + change.path()); //$NON-NLS-1$
+            }
             else
                 tree.setToolTipText(null);
         });
@@ -442,7 +481,7 @@ public class GitFlowView extends ViewPart
             if (item == null)
                 return;
             if (item.getBounds(1).contains(event.x, event.y) && canDiscardGroup(item))
-                discardAllChanges();
+                discardUnstagedChanges();
             else if (item.getBounds(1).contains(event.x, event.y) && canDeleteUntracked(item))
                 deleteUntrackedFile((FileChange) item.getData());
             else if (item.getBounds(1).contains(event.x, event.y) && canDiscard(item))
@@ -492,9 +531,9 @@ public class GitFlowView extends ViewPart
             if (item.getData() instanceof Boolean staged)
             {
                 boolean added = false;
-                if (canDiscardGroup(staged))
+                if (!staged && canDiscardGroup(false))
                 {
-                    menuItem(menu, Messages.get("discardAllChanges"), this::discardAllChanges) //$NON-NLS-1$
+                    menuItem(menu, Messages.get("discardAllChanges"), this::discardUnstagedChanges) //$NON-NLS-1$
                         .setEnabled(!busy);
                     added = true;
                 }
@@ -556,6 +595,9 @@ public class GitFlowView extends ViewPart
                 }
                 menuItem(menu, Messages.get(staged ? "unstageFile" : "stageFile"), //$NON-NLS-1$ //$NON-NLS-2$
                     () -> changeFile(change.path(), staged)).setEnabled(!busy);
+                new MenuItem(menu, SWT.SEPARATOR);
+                menuItem(menu, Messages.get("hideAllChanges"), this::hideChanges) //$NON-NLS-1$
+                    .setEnabled(!busy);
             }
         });
         return tree;
@@ -618,14 +660,14 @@ public class GitFlowView extends ViewPart
         return !changes.staged().isEmpty() || !changes.unstaged().isEmpty();
     }
 
-    private boolean canDiscardAllChanges()
+    private boolean canDiscardUnstagedChanges()
     {
-        return canDiscardGroup(true) || canDiscardGroup(false);
+        return canDiscardGroup(false);
     }
 
     private boolean canDiscardGroup(TreeItem item)
     {
-        return item.getData() instanceof Boolean staged && canDiscardGroup(staged);
+        return item.getData() instanceof Boolean staged && !staged && canDiscardGroup(false);
     }
 
     private boolean canDiscardGroup(boolean staged)
@@ -638,12 +680,9 @@ public class GitFlowView extends ViewPart
         return false;
     }
 
-    private int discardableChangeCount()
+    private int discardableUnstagedCount()
     {
         Set<String> paths = new HashSet<>();
-        for (FileChange change : changes.staged())
-            if ("M".equals(change.state()) || "D".equals(change.state()) || "A".equals(change.state())) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-                paths.add(change.path());
         for (FileChange change : changes.unstaged())
             if ("M".equals(change.state()) || "D".equals(change.state()) || "U".equals(change.state())) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
                 paths.add(change.path());
@@ -792,9 +831,9 @@ public class GitFlowView extends ViewPart
         historyItem(menu, "Переключиться на коммит (без ветки)", //$NON-NLS-1$
             () -> BranchOperationUI.checkout(repository, entry.hash(), true).start());
         historyItem(menu, "Создать ветку…", //$NON-NLS-1$
-            () -> SmartCheckoutHandler.openCreateBranchWizard(getSite().getShell(), repository));
-        historyItem(menu, "Создать тег…", () -> createTagAt(repository, entry.hash())); //$NON-NLS-1$
-        historyItem(menu, "Применить коммит (cherry-pick)", () -> cherryPick(repository, entry)); //$NON-NLS-1$
+            () -> createBranchAt(repository, entry.hash()));
+        historyItem(menu, "Создать метку…", () -> createTagAt(repository, entry.hash())); //$NON-NLS-1$
+        historyItem(menu, "Скопировать коммит (cherry-pick)", () -> cherryPick(repository, entry)); //$NON-NLS-1$
         new MenuItem(menu, SWT.SEPARATOR);
         String upstream = upstream(repository);
         MenuItem remoteCompare = historyItem(menu, "Сравнить с удалённой веткой", //$NON-NLS-1$
@@ -808,11 +847,11 @@ public class GitFlowView extends ViewPart
         resetItem.setText("Сброс"); //$NON-NLS-1$
         Menu resetMenu = new Menu(menu);
         resetItem.setMenu(resetMenu);
-        historyItem(resetMenu, "Мягко (только указатель ветки)", //$NON-NLS-1$
+        historyItem(resetMenu, "Мягкий (сохранить подготовленные изменения)", //$NON-NLS-1$
             () -> ResetMenu.performReset(getSite().getShell(), repository, entry.plot().getId(), ResetType.SOFT));
-        historyItem(resetMenu, "Средне (указатель ветки и индекс)", //$NON-NLS-1$
+        historyItem(resetMenu, "Смешанный (вернуть всё в изменения)", //$NON-NLS-1$
             () -> ResetMenu.performReset(getSite().getShell(), repository, entry.plot().getId(), ResetType.MIXED));
-        historyItem(resetMenu, "Жёстко (ветка, индекс и рабочая копия)", //$NON-NLS-1$
+        historyItem(resetMenu, "Жёсткий (удалить все изменения)", //$NON-NLS-1$
             () -> ResetMenu.performReset(getSite().getShell(), repository, entry.plot().getId(), ResetType.HARD));
         new MenuItem(menu, SWT.SEPARATOR);
         historyItem(menu, "Копировать хеш коммита", () -> copyText(entry.hash())); //$NON-NLS-1$
@@ -861,10 +900,11 @@ public class GitFlowView extends ViewPart
     {
         try
         {
-            CreateTagDialog dialog = new CreateTagDialog(getSite().getShell(), ObjectId.fromString(hash), repository);
+            ObjectId commitId = ObjectId.fromString(hash);
+            CreateTagDialog dialog = new CreateTagDialog(getSite().getShell(), commitId, repository);
             if (dialog.open() != org.eclipse.jface.window.Window.OK)
                 return;
-            RevCommit target = repository.parseCommit(dialog.getTagCommit());
+            RevCommit target = repository.parseCommit(commitId);
             String name = dialog.getTagName();
             boolean pushAfter = dialog.shouldStartPushWizard();
             TagOperation operation = new TagOperation(repository).setName(name).setTarget(target)
@@ -915,6 +955,18 @@ public class GitFlowView extends ViewPart
         }
     }
 
+    private void createBranchAt(Repository repository, String hash)
+    {
+        try
+        {
+            new WizardDialog(getSite().getShell(), new CreateBranchWizard(repository, hash)).open();
+        }
+        catch (RuntimeException e)
+        {
+            showFeedback("Не удалось открыть создание ветки: " + e.getMessage()); //$NON-NLS-1$
+        }
+    }
+
     private void cherryPick(Repository repository, RecentHistory.Entry entry)
     {
         try
@@ -923,7 +975,7 @@ public class GitFlowView extends ViewPart
         }
         catch (Exception e)
         {
-            showFeedback("Не удалось применить коммит: " + e.getMessage()); //$NON-NLS-1$
+            showFeedback("Не удалось скопировать коммит: " + e.getMessage()); //$NON-NLS-1$
         }
     }
 
@@ -963,22 +1015,10 @@ public class GitFlowView extends ViewPart
 
     private void compareCommits(Repository repository, String oldRevision, String newRevision)
     {
-        try (RevWalk walk = new RevWalk(repository);
-            DiffFormatter formatter = new DiffFormatter(DisabledOutputStream.INSTANCE))
+        try
         {
-            RevCommit oldCommit = walk.parseCommit(repository.resolve(oldRevision));
-            RevCommit newCommit = walk.parseCommit(repository.resolve(newRevision));
-            formatter.setRepository(repository);
-            List<DiffEntry> diffs = formatter.scan(oldCommit.getTree(), newCommit.getTree());
-            if (diffs.isEmpty())
-            {
-                showFeedback("Изменений между коммитами нет."); //$NON-NLS-1$
-                return;
-            }
-            IWorkbenchPage page = getSite().getPage();
-            for (DiffEntry diff : diffs)
-                CompareUtils.openInCompare(oldCommit, newCommit, diff.getOldPath(), diff.getNewPath(),
-                    repository, page);
+            CompareTreeView view = (CompareTreeView) getSite().getPage().showView(CompareTreeView.ID);
+            view.setInput(repository, oldRevision, newRevision);
         }
         catch (Exception e)
         {
@@ -991,7 +1031,11 @@ public class GitFlowView extends ViewPart
         try
         {
             String branch = repository.getBranch();
-            return new BranchConfig(repository.getConfig(), branch).getRemoteTrackingBranch();
+            String tracking = new BranchConfig(repository.getConfig(), branch).getRemoteTrackingBranch();
+            if (tracking != null && repository.resolve(tracking) != null)
+                return tracking;
+            String origin = Constants.R_REMOTES + "origin/" + branch; //$NON-NLS-1$
+            return repository.resolve(origin) == null ? null : origin;
         }
         catch (IOException e)
         {
@@ -1415,7 +1459,7 @@ public class GitFlowView extends ViewPart
         TreeItem group = new TreeItem(changesTree, SWT.NONE);
         group.setText(new String[] {
             Messages.get(staged ? "stagedChanges" : "unstagedChanges") + " · " + files.size(), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            canDiscardGroup(staged) ? "↶" : "", //$NON-NLS-1$
+            !staged && canDiscardGroup(false) ? "↶" : "", //$NON-NLS-1$
             files.isEmpty() ? "" : staged ? "−" : "+"}); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         group.setData(staged);
         for (FileChange change : files)
@@ -1763,18 +1807,30 @@ public class GitFlowView extends ViewPart
                 PullOperations::fetch, null); //$NON-NLS-1$
     }
 
-    private void discardAllChanges()
+    private boolean confirmDiscard(String title, String question, String action)
+    {
+        return new MessageDialog(getSite().getShell(), title, null, question, MessageDialog.WARNING,
+            new String[] {Messages.get("keepChangesAction"), action}, 0).open() == 1; //$NON-NLS-1$
+    }
+
+    private void discardUnstagedChanges()
     {
         Repository repository = selectedRepository();
-        if (repository == null || isRunning(repository) || !canDiscardAllChanges())
+        if (repository == null || isRunning(repository) || !canDiscardUnstagedChanges())
             return;
-        String question = Messages.get("discardAllConfirm") + "\n\n" //$NON-NLS-1$
-            + Messages.get("discardableChangeCount") + " " + discardableChangeCount(); //$NON-NLS-1$
-        if (!MessageDialog.openConfirm(getSite().getShell(),
-            Messages.get("discardAllChanges"), question)) //$NON-NLS-1$
+        int count = discardableUnstagedCount();
+        String question = count == 1
+            ? Messages.get("discardConfirm").replace("{0}", changes.unstaged().stream() //$NON-NLS-1$ //$NON-NLS-2$
+                .filter(change -> !"C".equals(change.state())).findFirst().orElseThrow().path()) //$NON-NLS-1$
+            : Messages.get("discardAllConfirm").replace("{0}", Integer.toString(count)); //$NON-NLS-1$ //$NON-NLS-2$
+        if (count > 1)
+            question += "\n\n" + Messages.get("discardUnstagedWarning"); //$NON-NLS-1$ //$NON-NLS-2$
+        if (!confirmDiscard(Messages.get("discardChanges"), question, count == 1 //$NON-NLS-1$
+            ? Messages.get("discardFileAction") //$NON-NLS-1$
+            : Messages.get("discardAllAction").replace("{0}", Integer.toString(count)))) //$NON-NLS-1$ //$NON-NLS-2$
             return;
         OperationJob.schedule(repository, getSite().getShell(), Messages.get("discardAllChanges"), //$NON-NLS-1$
-            (selected, monitor) -> WorkingChanges.discardAllChanges(selected), null);
+            (selected, monitor) -> WorkingChanges.discardUnstagedChanges(selected), null);
     }
 
     private void runPrimary()
@@ -1789,13 +1845,8 @@ public class GitFlowView extends ViewPart
         if (repository == null)
             return;
         boolean stageTracked = !mergeReady && changes.staged().isEmpty();
-        List<String> trackedFiles = changes.unstaged().stream()
-            .filter(change -> !"U".equals(change.state())).map(FileChange::path).toList(); //$NON-NLS-1$
-        String preview = String.join("\n", trackedFiles.stream().limit(8).toList()); //$NON-NLS-1$
-        if (trackedFiles.size() > 8)
-            preview += "\n… (" + (trackedFiles.size() - 8) + ")"; //$NON-NLS-1$ //$NON-NLS-2$
-        if (stageTracked && !MessageDialog.openQuestion(getSite().getShell(),
-            Messages.get("commitOnly"), Messages.get("stageTrackedConfirm") + "\n\n" + preview)) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        if (!CommitPreparation.saveEditors(repository, getSite().getShell(),
+            changes.staged().stream().map(FileChange::path).collect(java.util.stream.Collectors.toSet())))
             return;
         String message = messageField.getText().replace("\r\n", "\n").trim(); //$NON-NLS-1$ //$NON-NLS-2$
         boolean send = sendAfterCommit && hasRemote;
@@ -1879,10 +1930,8 @@ public class GitFlowView extends ViewPart
         Repository repository = selectedRepository();
         if (repository == null || isRunning(repository))
             return;
-        String question = Messages.get("discardConfirm") + "\n\n" + file.path() + "\n\n" //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            + Messages.get("discardWarning"); //$NON-NLS-1$
-        if (!MessageDialog.openConfirm(getSite().getShell(),
-            Messages.get("discardChanges"), question)) //$NON-NLS-1$
+        String question = Messages.get("discardConfirm").replace("{0}", file.path()); //$NON-NLS-1$ //$NON-NLS-2$
+        if (!confirmDiscard(Messages.get("discardChanges"), question, Messages.get("discardFileAction"))) //$NON-NLS-1$ //$NON-NLS-2$
             return;
         movedPath = null;
         changes = new WorkingChanges(changes.staged().stream()
@@ -1900,9 +1949,9 @@ public class GitFlowView extends ViewPart
         Repository repository = selectedRepository();
         if (repository == null || isRunning(repository))
             return;
-        String question = Messages.get("deleteNewFileConfirm") + "\n\n" + file.path() + "\n\n" //$NON-NLS-1$ //$NON-NLS-2$
+        String question = Messages.get("deleteNewFileConfirm").replace("{0}", file.path()) + "\n\n" //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             + Messages.get("deleteNewFileWarning"); //$NON-NLS-1$
-        if (!MessageDialog.openConfirm(getSite().getShell(), Messages.get("deleteNewFile"), question)) //$NON-NLS-1$
+        if (!confirmDiscard(Messages.get("deleteNewFile"), question, Messages.get("deleteFileAction"))) //$NON-NLS-1$ //$NON-NLS-2$
             return;
         OperationJob.schedule(repository, getSite().getShell(), Messages.get("deleteNewFile"), //$NON-NLS-1$
             (selected, monitor) -> WorkingChanges.deleteUntrackedFile(selected, file.path()), null);

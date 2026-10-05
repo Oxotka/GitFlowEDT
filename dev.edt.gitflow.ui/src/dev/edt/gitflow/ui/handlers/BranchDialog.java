@@ -52,13 +52,8 @@ final class BranchDialog extends Dialog
             BranchPicker picker = new BranchPicker(fields, repository, true, true, choice ->
             {
                 selectedChoice = choice;
-                if (choice == null)
+                if (!feedback.getText().isEmpty())
                     showFeedback(""); //$NON-NLS-1$
-                else
-                    showFeedback(mode == Mode.COMPARE ? "" : choice.remote() //$NON-NLS-1$
-                        ? Messages.get(choice.localExists() ? "remoteUsesLocal" : "remoteCreatesLocal") //$NON-NLS-1$ //$NON-NLS-2$
-                            + " " + choice.localName() //$NON-NLS-1$
-                        : ""); //$NON-NLS-1$
             }, this::okPressed);
             if (mode == Mode.CHECKOUT)
             {

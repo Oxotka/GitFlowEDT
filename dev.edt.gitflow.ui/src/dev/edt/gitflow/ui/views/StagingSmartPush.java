@@ -4,7 +4,9 @@ import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.HashSet;
 import java.util.Objects;
+import java.util.Set;
 
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.IStatus;
@@ -49,10 +51,10 @@ final class StagingSmartPush
         try
         {
             Class<?> type = view.getClass();
-            Method commit = type.getDeclaredMethod("internalCommit", boolean.class, Runnable.class); //$NON-NLS-1$
-            Method enable = type.getDeclaredMethod("enableAllWidgets", boolean.class); //$NON-NLS-1$
+            Method commit = findMethod(type, "internalCommit", boolean.class, Runnable.class); //$NON-NLS-1$
+            Method enable = findMethod(type, "enableAllWidgets", boolean.class); //$NON-NLS-1$
             type.getMethod("getCurrentRepository"); //$NON-NLS-1$
-            Field field = type.getDeclaredField("commitAndPushButton"); //$NON-NLS-1$
+            Field field = findField(type, "commitAndPushButton"); //$NON-NLS-1$
             commit.setAccessible(true);
             enable.setAccessible(true);
             field.setAccessible(true);
@@ -80,7 +82,7 @@ final class StagingSmartPush
     {
         try
         {
-            Field field = view.getClass().getDeclaredField("rebaseSection"); //$NON-NLS-1$
+            Field field = findField(view.getClass(), "rebaseSection"); //$NON-NLS-1$
             field.setAccessible(true);
             Control section = (Control) field.get(view);
             if (section != null)
@@ -97,6 +99,35 @@ final class StagingSmartPush
         {
             log("Не удалось скрывать временные кнопки rebase во время Smart Push.", e); //$NON-NLS-1$
         }
+    }
+
+    private static Method findMethod(Class<?> type, String name, Class<?>... parameters)
+        throws NoSuchMethodException
+    {
+        for (Class<?> current = type; current != null; current = current.getSuperclass())
+            try
+            {
+                return current.getDeclaredMethod(name, parameters);
+            }
+            catch (NoSuchMethodException e)
+            {
+                // Method may be declared by the EGit base view.
+            }
+        throw new NoSuchMethodException(type.getName() + "." + name); //$NON-NLS-1$
+    }
+
+    private static Field findField(Class<?> type, String name) throws NoSuchFieldException
+    {
+        for (Class<?> current = type; current != null; current = current.getSuperclass())
+            try
+            {
+                return current.getDeclaredField(name);
+            }
+            catch (NoSuchFieldException e)
+            {
+                // Field may be declared by the EGit base view.
+            }
+        throw new NoSuchFieldException(type.getName() + "." + name); //$NON-NLS-1$
     }
 
     private static void hideRebaseSection(Button button)
@@ -125,7 +156,7 @@ final class StagingSmartPush
             {
                 try
                 {
-                    boolean staged = hasStagedChanges(repository);
+                    Set<String> stagedPaths = stagedPaths(repository);
                     Display.getDefault().asyncExec(() ->
                     {
                         if (button.isDisposed())
@@ -133,7 +164,7 @@ final class StagingSmartPush
                         button.setData(CHECKING, null);
                         if (!view.getSite().getShell().isDisposed()
                             && repository.equals(currentRepository(view)))
-                            continueClicked(view, button, commit, enable, repository, staged);
+                            continueClicked(view, button, commit, enable, repository, stagedPaths);
                     });
                 }
                 catch (GitAPIException | RuntimeException e)
@@ -157,15 +188,17 @@ final class StagingSmartPush
     }
 
     private static void continueClicked(ViewPart view, Button button, Method commit, Method enable,
-        Repository repository, boolean staged)
+        Repository repository, Set<String> stagedPaths)
     {
         try
         {
-            if (!staged)
+            if (stagedPaths.isEmpty())
             {
                 push(view, button, repository, false, false);
                 return;
             }
+            if (!CommitPreparation.saveEditors(repository, view.getSite().getShell(), stagedPaths))
+                return;
             ObjectId before = repository.resolve(Constants.HEAD);
             String branch = repository.getBranch();
             enable.invoke(view, false);
@@ -229,11 +262,13 @@ final class StagingSmartPush
         }
     }
 
-    private static boolean hasStagedChanges(Repository repository) throws GitAPIException
+    private static Set<String> stagedPaths(Repository repository) throws GitAPIException
     {
         var status = Git.wrap(repository).status().call();
-        return !status.getAdded().isEmpty() || !status.getChanged().isEmpty()
-            || !status.getRemoved().isEmpty();
+        Set<String> paths = new HashSet<>(status.getAdded());
+        paths.addAll(status.getChanged());
+        paths.addAll(status.getRemoved());
+        return paths;
     }
 
     private static void push(ViewPart view, Button button, Repository repository,
@@ -308,6 +343,9 @@ final class StagingSmartPush
         }
         else if (result.kind() == OperationResult.Kind.NEEDS_NATIVE_MERGE)
             NativePullLauncher.start(repository, "Smart Push"); //$NON-NLS-1$
+        else if (result.kind() == OperationResult.Kind.CANCELLED)
+            view.getViewSite().getActionBars().getStatusLineManager()
+                .setMessage((committed ? "Коммит сохранён локально. " : "") + result.message()); //$NON-NLS-1$ //$NON-NLS-2$
         else if (result.succeeded())
             view.getViewSite().getActionBars().getStatusLineManager()
                 .setMessage((committed ? "Коммит создан. " : "") + result.message()); //$NON-NLS-1$ //$NON-NLS-2$

@@ -175,7 +175,7 @@ public record WorkingChanges(List<FileChange> staged, List<FileChange> unstaged)
         }
     }
 
-    public static OperationResult discardAllChanges(Repository repository)
+    public static OperationResult discardUnstagedChanges(Repository repository)
     {
         if (!RepositorySupport.isSafe(repository))
             return new OperationResult(Kind.ERROR, "Репозиторий занят другой Git-операцией."); //$NON-NLS-1$
@@ -186,25 +186,15 @@ public record WorkingChanges(List<FileChange> staged, List<FileChange> unstaged)
             Git git = Git.wrap(repository);
             Status status = git.status().call();
             Set<String> paths = new LinkedHashSet<>();
-            paths.addAll(status.getChanged());
             paths.addAll(status.getModified());
             paths.addAll(status.getMissing());
-            paths.addAll(status.getRemoved());
-            paths.removeAll(status.getAdded());
-            Set<String> newFiles = new LinkedHashSet<>(status.getAdded());
-            newFiles.addAll(status.getUntracked());
+            Set<String> newFiles = new LinkedHashSet<>(status.getUntracked());
             workspaceChanged = !paths.isEmpty() || !newFiles.isEmpty();
             if (!paths.isEmpty())
             {
-                var checkout = git.checkout().setStartPoint(Constants.HEAD);
+                var checkout = git.checkout();
                 paths.forEach(checkout::addPath);
                 checkout.call();
-            }
-            if (!status.getAdded().isEmpty())
-            {
-                var reset = git.reset();
-                status.getAdded().forEach(reset::addPath);
-                reset.call();
             }
             Path root = repository.getWorkTree().toPath().toAbsolutePath().normalize();
             for (String path : newFiles)
@@ -218,7 +208,7 @@ public record WorkingChanges(List<FileChange> staged, List<FileChange> unstaged)
                 }
             }
             return new OperationResult(Kind.SUCCESS,
-                "Изменённые файлы возвращены к HEAD, новые файлы удалены; конфликты не изменены.", //$NON-NLS-1$
+                "Неподготовленные изменения отменены; подготовленные изменения сохранены.", //$NON-NLS-1$
                 workspaceChanged);
         }
         catch (GitAPIException | IOException e)

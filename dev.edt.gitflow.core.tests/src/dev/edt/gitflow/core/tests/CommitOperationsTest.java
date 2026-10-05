@@ -46,6 +46,49 @@ public class CommitOperationsTest
     }
 
     @Test
+    public void cancellationAfterCommitKeepsCommitLocalWithoutPushing() throws Exception
+    {
+        Path root = Files.createTempDirectory("gitflow-cancel-push-"); //$NON-NLS-1$
+        Path bare = root.resolve("origin.git"); //$NON-NLS-1$
+        Path work = root.resolve("work"); //$NON-NLS-1$
+        try (Git origin = Git.init().setBare(true).setDirectory(bare.toFile()).call();
+             Git git = Git.init().setDirectory(work.toFile()).call())
+        {
+            Files.writeString(work.resolve("file.txt"), "base"); //$NON-NLS-1$ //$NON-NLS-2$
+            git.add().addFilepattern("file.txt").call(); //$NON-NLS-1$
+            git.commit().setMessage("base").call(); //$NON-NLS-1$
+            git.remoteAdd().setName("origin").setUri(new URIish(bare.toUri().toString())).call(); //$NON-NLS-1$
+            git.push().setRemote("origin").add(git.getRepository().getFullBranch()).call(); //$NON-NLS-1$
+            String branch = git.getRepository().getBranch();
+            git.getRepository().getConfig().setString("branch", branch, "remote", "origin"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            git.getRepository().getConfig().setString("branch", branch, "merge", "refs/heads/" + branch); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            git.getRepository().getConfig().save();
+            var remoteHead = origin.getRepository().resolve("refs/heads/" + branch); //$NON-NLS-1$
+            Files.writeString(work.resolve("file.txt"), "local"); //$NON-NLS-1$ //$NON-NLS-2$
+            git.add().addFilepattern("file.txt").call(); //$NON-NLS-1$
+            NullProgressMonitor monitor = new NullProgressMonitor()
+            {
+                private int steps;
+
+                @Override
+                public void worked(int work)
+                {
+                    if ((steps += work) >= 2)
+                        setCanceled(true);
+                }
+            };
+
+            OperationResult result = CommitOperations.commitAndPush(git.getRepository(), "local", //$NON-NLS-1$
+                false, true, true, monitor);
+
+            assertEquals(OperationResult.Kind.CANCELLED, result.kind());
+            assertTrue(result.commitCreated());
+            assertEquals("local", git.log().setMaxCount(1).call().iterator().next().getShortMessage()); //$NON-NLS-1$
+            assertEquals(remoteHead, origin.getRepository().resolve("refs/heads/" + branch)); //$NON-NLS-1$
+        }
+    }
+
+    @Test
     public void commitAndPushKeepsCommitLocalWhenSameFileChangedUpstream() throws Exception
     {
         Path root = Files.createTempDirectory("gitflow-commit-overlap-"); //$NON-NLS-1$

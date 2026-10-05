@@ -97,6 +97,8 @@ public final class OperationJob
                     }
                 });
                 completion[0] = result;
+                if (result.kind() == OperationResult.Kind.CANCELLED)
+                    return Status.CANCEL_STATUS;
                 if (!result.succeeded() && result.kind() != OperationResult.Kind.NEEDS_CONFIRMATION
                     && result.kind() != OperationResult.Kind.NEEDS_NATIVE_MERGE
                     && result.kind() != OperationResult.Kind.NEEDS_CHECKOUT_CLEANUP)
@@ -139,6 +141,12 @@ public final class OperationJob
                         {
                             if (completionAction != null)
                                 completionAction.accept(completion[0]);
+                            if (completion[0].kind() == OperationResult.Kind.CANCELLED)
+                            {
+                                GitFlowView.publishStatus(title + ": " + completion[0].message(), //$NON-NLS-1$
+                                    Messages.get("operationCancelledShort")); //$NON-NLS-1$
+                                return;
+                            }
                             if (completion[0].kind() == OperationResult.Kind.NEEDS_NATIVE_MERGE)
                             {
                                 NativePullLauncher.start(repository, title);
@@ -149,6 +157,9 @@ public final class OperationJob
                                 succeeded ? Messages.get("allDone") : Messages.get("operationFailedShort"));
                         }
                     });
+                else if (changeEvent.getResult().getSeverity() == IStatus.CANCEL)
+                    GitFlowView.publishStatus(title + Messages.get("operationCancelled"), //$NON-NLS-1$
+                        Messages.get("operationCancelledShort")); //$NON-NLS-1$
                 else if (!changeEvent.getResult().isOK())
                     GitFlowView.publishStatus(title + ": " + changeEvent.getResult().getMessage(), //$NON-NLS-1$
                         Messages.get("operationFailedShort")); //$NON-NLS-1$

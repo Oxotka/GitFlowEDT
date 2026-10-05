@@ -32,21 +32,27 @@ public final class CommitOperations
         monitor.beginTask("Безопасный коммит", 2); //$NON-NLS-1$
         try
         {
+            if (monitor.isCanceled())
+                return new OperationResult(Kind.CANCELLED, "Коммит отменён."); //$NON-NLS-1$
             Git git = Git.wrap(repository);
             String branch = repository.getBranch();
             if (PROTECTED_BRANCHES.contains(branch) && !confirmProtected)
                 return new OperationResult(Kind.NEEDS_CONFIRMATION,
-                    "Вы собираетесь сделать коммит в защищённую ветку " + branch + ". Продолжить?"); //$NON-NLS-1$ //$NON-NLS-2$
+                    "Создать коммит в защищённой ветке " + branch + "?"); //$NON-NLS-1$ //$NON-NLS-2$
             Status status = git.status().call();
             if (status.isClean() && !mergeReady)
                 return new OperationResult(Kind.NO_CHANGE, "Изменений для коммита нет."); //$NON-NLS-1$
             if (stageTracked)
                 git.add().setUpdate(true).addFilepattern(".").call(); //$NON-NLS-1$
             monitor.worked(1);
+            if (monitor.isCanceled())
+                return new OperationResult(Kind.CANCELLED, "Коммит отменён."); //$NON-NLS-1$
             Status staged = git.status().call();
             if (!mergeReady && staged.getAdded().isEmpty() && staged.getChanged().isEmpty()
                 && staged.getRemoved().isEmpty())
                 return new OperationResult(Kind.ERROR, "Нет подготовленных отслеживаемых изменений."); //$NON-NLS-1$
+            if (monitor.isCanceled())
+                return new OperationResult(Kind.CANCELLED, "Коммит отменён."); //$NON-NLS-1$
             git.commit().setMessage(message).call();
             monitor.worked(1);
             return new OperationResult(Kind.SUCCESS, "Коммит создан в ветке " + branch + ".", false, true); //$NON-NLS-1$ //$NON-NLS-2$
@@ -74,10 +80,10 @@ public final class CommitOperations
             if (!confirmed && PROTECTED_BRANCHES.contains(branch))
                 return new OperationResult(Kind.NEEDS_CONFIRMATION,
                     "Создать коммит в защищённой ветке " + branch + "?" //$NON-NLS-1$ //$NON-NLS-2$
-                        + (send && hasRemote ? " Затем плагин попытается отправить его." : "")); //$NON-NLS-1$ //$NON-NLS-2$
+                        + (send && hasRemote ? " После создания коммит будет отправлен на сервер." : "")); //$NON-NLS-1$ //$NON-NLS-2$
             if (!confirmed && send && hasRemote && config.getRemoteTrackingBranch() == null)
                 return new OperationResult(Kind.NEEDS_CONFIRMATION,
-                    "После коммита настроить связь с origin/" + branch + " и отправить ветку?"); //$NON-NLS-1$ //$NON-NLS-2$
+                    "После коммита связать ветку с origin/" + branch + " и отправить изменения?"); //$NON-NLS-1$ //$NON-NLS-2$
             OperationResult committed = safeCommit(repository, message, stageTracked, true, monitor);
             if (!committed.succeeded() || committed.kind() == Kind.NO_CHANGE)
                 return committed;
@@ -86,7 +92,13 @@ public final class CommitOperations
                     committed.message() + (send ? " Коммит сохранён локально: remote не настроен." //$NON-NLS-1$
                         : " Коммит сохранён локально: отправка отключена."), //$NON-NLS-1$
                     false, true);
+            if (monitor.isCanceled())
+                return new OperationResult(Kind.CANCELLED,
+                    "Коммит создан локально. Отправка отменена.", false, true); //$NON-NLS-1$
             OperationResult pushed = PullOperations.smartPush(repository, true, monitor);
+            if (pushed.kind() == Kind.CANCELLED)
+                return new OperationResult(Kind.CANCELLED,
+                    "Коммит создан локально. " + pushed.message(), pushed.workspaceChanged(), true); //$NON-NLS-1$
             if (pushed.kind() == Kind.NEEDS_NATIVE_MERGE)
                 return new OperationResult(Kind.NEEDS_NATIVE_MERGE,
                     committed.message() + " " + pushed.message() + " Коммит сохранён локально; после проверки " //$NON-NLS-1$
