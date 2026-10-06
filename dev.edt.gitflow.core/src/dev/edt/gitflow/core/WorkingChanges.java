@@ -82,25 +82,7 @@ public record WorkingChanges(List<FileChange> staged, List<FileChange> unstaged)
     {
         try
         {
-            Git git = Git.wrap(repository);
-            Status status = git.status().call();
-            Set<String> paths = new LinkedHashSet<>();
-            paths.addAll(status.getModified());
-            paths.addAll(status.getUntracked());
-            paths.addAll(status.getConflicting());
-            if (!paths.isEmpty())
-            {
-                var add = git.add();
-                paths.forEach(add::addFilepattern);
-                add.call();
-            }
-            if (!status.getMissing().isEmpty())
-            {
-                var add = git.add().setUpdate(true);
-                status.getMissing().forEach(add::addFilepattern);
-                add.call();
-            }
-            return new OperationResult(Kind.SUCCESS, "Подготовка всех изменений завершена."); //$NON-NLS-1$
+            return stage(repository, read(repository).unstaged());
         }
         catch (GitAPIException e)
         {
@@ -108,15 +90,35 @@ public record WorkingChanges(List<FileChange> staged, List<FileChange> unstaged)
         }
     }
 
-    public static OperationResult unstageAll(Repository repository)
+    public static OperationResult stage(Repository repository, List<FileChange> files)
     {
         try
         {
-            Status status = Git.wrap(repository).status().call();
-            Set<String> paths = new LinkedHashSet<>();
-            paths.addAll(status.getAdded());
-            paths.addAll(status.getChanged());
-            paths.addAll(status.getRemoved());
+            Git git = Git.wrap(repository);
+            for (boolean deleted : new boolean[] {false, true})
+            {
+                List<String> paths = files.stream().filter(file -> deleted == "D".equals(file.state())) //$NON-NLS-1$
+                    .map(FileChange::path).toList();
+                if (!paths.isEmpty())
+                {
+                    var add = git.add().setUpdate(deleted);
+                    paths.forEach(add::addFilepattern);
+                    add.call();
+                }
+            }
+            return new OperationResult(Kind.SUCCESS, files.size() == 1
+                ? "Подготовлен: " + files.get(0).path() : "Подготовка всех изменений завершена."); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        catch (GitAPIException e)
+        {
+            return new OperationResult(Kind.ERROR, "Подготовить все изменения не удалось: " + e.getMessage()); //$NON-NLS-1$
+        }
+    }
+
+    public static OperationResult unstage(Repository repository, List<String> paths)
+    {
+        try
+        {
             if (!paths.isEmpty())
             {
                 var reset = Git.wrap(repository).reset();
@@ -131,13 +133,25 @@ public record WorkingChanges(List<FileChange> staged, List<FileChange> unstaged)
         }
     }
 
+    public static OperationResult unstageAll(Repository repository)
+    {
+        try
+        {
+            return unstage(repository, read(repository).staged().stream().map(FileChange::path).toList());
+        }
+        catch (GitAPIException e)
+        {
+            return new OperationResult(Kind.ERROR, "Вернуть все файлы в изменения не удалось: " + e.getMessage()); //$NON-NLS-1$
+        }
+    }
+
     public static OperationResult resetFileToHead(Repository repository, String path)
     {
         if (!RepositorySupport.isSafe(repository))
             return new OperationResult(Kind.ERROR, "Репозиторий занят другой Git-операцией."); //$NON-NLS-1$
         try
         {
-            Status status = Git.wrap(repository).status().call();
+            Status status = Git.wrap(repository).status().addPath(path).call();
             if (status.getAdded().contains(path) || status.getConflicting().contains(path)
                 || !status.getModified().contains(path) && !status.getMissing().contains(path)
                 && !status.getChanged().contains(path) && !status.getRemoved().contains(path))
@@ -158,7 +172,7 @@ public record WorkingChanges(List<FileChange> staged, List<FileChange> unstaged)
             return new OperationResult(Kind.ERROR, "Репозиторий занят другой Git-операцией."); //$NON-NLS-1$
         try
         {
-            Status status = Git.wrap(repository).status().call();
+            Status status = Git.wrap(repository).status().addPath(path).call();
             if (!status.getUntracked().contains(path))
                 return new OperationResult(Kind.ERROR, "Удалить можно только новый неотслеживаемый файл: " + path); //$NON-NLS-1$
             Path root = repository.getWorkTree().toPath().toAbsolutePath().normalize();

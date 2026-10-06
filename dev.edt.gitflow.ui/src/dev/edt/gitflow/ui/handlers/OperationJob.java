@@ -112,6 +112,13 @@ public final class OperationJob
             @Override
             public void done(IJobChangeEvent changeEvent)
             {
+                if (completion[0] == null)
+                {
+                    boolean cancelled = changeEvent.getResult().getSeverity() == IStatus.CANCEL;
+                    completion[0] = new OperationResult(cancelled ? OperationResult.Kind.CANCELLED
+                        : OperationResult.Kind.ERROR, cancelled ? Messages.get("operationCancelledShort")
+                            : changeEvent.getResult().getMessage()); //$NON-NLS-1$
+                }
                 GitFlowView.finished(repository);
                 if (completion[0] != null)
                     Display.getDefault().asyncExec(() ->
@@ -157,12 +164,6 @@ public final class OperationJob
                                 succeeded ? Messages.get("allDone") : Messages.get("operationFailedShort"));
                         }
                     });
-                else if (changeEvent.getResult().getSeverity() == IStatus.CANCEL)
-                    GitFlowView.publishStatus(title + Messages.get("operationCancelled"), //$NON-NLS-1$
-                        Messages.get("operationCancelledShort")); //$NON-NLS-1$
-                else if (!changeEvent.getResult().isOK())
-                    GitFlowView.publishStatus(title + ": " + changeEvent.getResult().getMessage(), //$NON-NLS-1$
-                        Messages.get("operationFailedShort")); //$NON-NLS-1$
             }
         });
         GitFlowView.started(repository);

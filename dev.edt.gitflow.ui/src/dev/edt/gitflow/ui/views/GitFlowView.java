@@ -1619,7 +1619,7 @@ public class GitFlowView extends ViewPart
     {
     }
 
-    private record PendingIndexChange(Repository repository, String path, boolean staged)
+    private record PendingIndexChange(Repository repository, FileChange file, boolean staged)
     {
     }
 
@@ -1866,7 +1866,7 @@ public class GitFlowView extends ViewPart
     private void updatePrimary()
     {
         Repository repository = selectedRepository();
-        boolean busy = repository == null || RUNNING.containsKey(repository.getDirectory());
+        boolean busy = repository == null || isRunning(repository) || hasPendingIndexChanges(repository);
         boolean hasChanges = !changes.staged().isEmpty() || !changes.unstaged().isEmpty();
         boolean mergeReady = repositoryState == RepositoryState.MERGING_RESOLVED;
         boolean hasRemoteChanges = overview.incoming() > 0 || overview.outgoing() > 0;
@@ -1969,15 +1969,15 @@ public class GitFlowView extends ViewPart
 
     private void runPrimary()
     {
+        Repository repository = selectedRepository();
+        if (repository == null || isRunning(repository) || hasPendingIndexChanges(repository))
+            return;
         boolean mergeReady = repositoryState == RepositoryState.MERGING_RESOLVED;
         if (!mergeReady && changes.staged().isEmpty() && changes.unstaged().isEmpty())
         {
             runAdaptiveSync();
             return;
         }
-        Repository repository = selectedRepository();
-        if (repository == null)
-            return;
         boolean stageTracked = !mergeReady && changes.staged().isEmpty();
         if (!CommitPreparation.saveEditors(repository, getSite().getShell(),
             changes.staged().stream().map(FileChange::path).collect(java.util.stream.Collectors.toSet())))
@@ -2034,8 +2034,8 @@ public class GitFlowView extends ViewPart
                 unstagedExpanded = true;
             else
                 stagedExpanded = true;
+            queuedIndexChanges.addLast(new PendingIndexChange(repository, file, staged));
             optimisticMove(List.of(file), staged);
-            queuedIndexChanges.addLast(new PendingIndexChange(repository, path, staged));
             runNextIndexChange();
         }
     }
@@ -2050,13 +2050,19 @@ public class GitFlowView extends ViewPart
         indexChangeRunning = true;
         OperationJob.schedule(pending.repository(), getSite().getShell(),
             Messages.get(pending.staged() ? "unstageFile" : "stageFile"), //$NON-NLS-1$ //$NON-NLS-2$
-            (selected, monitor) -> pending.staged() ? WorkingChanges.unstage(selected, pending.path())
-                : WorkingChanges.stage(selected, pending.path()), null, result ->
+            (selected, monitor) -> pending.staged() ? WorkingChanges.unstage(selected, pending.file().path())
+                : WorkingChanges.stage(selected, List.of(pending.file())), null, result ->
                 {
                     queuedIndexChanges.removeFirstOccurrence(pending);
                     indexChangeRunning = false;
                     runNextIndexChange();
+                    updatePrimary();
                 });
+    }
+
+    private boolean hasPendingIndexChanges(Repository repository)
+    {
+        return queuedIndexChanges.stream().anyMatch(change -> sameRepository(change.repository(), repository));
     }
 
     private void discardFile(FileChange file)
@@ -2207,8 +2213,8 @@ public class GitFlowView extends ViewPart
         optimisticMove(files, staged);
         OperationJob.schedule(repository, getSite().getShell(),
             Messages.get(staged ? "unstageAll" : "stageAll"), //$NON-NLS-1$ //$NON-NLS-2$
-            (selected, monitor) -> staged ? WorkingChanges.unstageAll(selected)
-                : WorkingChanges.stageAll(selected), null);
+            (selected, monitor) -> staged ? WorkingChanges.unstage(selected,
+                files.stream().map(FileChange::path).toList()) : WorkingChanges.stage(selected, files), null);
     }
 
     private void optimisticMove(List<FileChange> files, boolean staged)

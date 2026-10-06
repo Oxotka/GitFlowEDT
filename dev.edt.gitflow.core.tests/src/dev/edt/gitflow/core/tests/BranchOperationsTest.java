@@ -20,6 +20,93 @@ import dev.edt.gitflow.core.WorkingChanges;
 public class BranchOperationsTest
 {
     @Test
+    public void checkoutMergesNonoverlappingUnstagedEditsInSameFile() throws Exception
+    {
+        Path work = Files.createTempDirectory("gitflow-checkout-same-file-"); //$NON-NLS-1$
+        try (Git git = Git.init().setDirectory(work.toFile()).call())
+        {
+            String base = "first\nsecond\nthird\nfourth\nfifth\nsixth\n"; //$NON-NLS-1$
+            commit(git, work, base);
+            String original = git.getRepository().getBranch();
+            git.checkout().setCreateBranch(true).setName("target").call(); //$NON-NLS-1$
+            commit(git, work, base.replace("sixth", "target sixth")); //$NON-NLS-1$ //$NON-NLS-2$
+            git.checkout().setName(original).call();
+            Files.writeString(work.resolve("file.txt"), base.replace("first", "local first")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+            OperationResult result = BranchOperations.checkout(git.getRepository(), "target", false, //$NON-NLS-1$
+                new NullProgressMonitor());
+
+            assertTrue(result.toString(), result.succeeded());
+            assertEquals("target", git.getRepository().getBranch()); //$NON-NLS-1$
+            assertEquals(base.replace("first", "local first").replace("sixth", "target sixth"), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+                Files.readString(work.resolve("file.txt"))); //$NON-NLS-1$
+            assertTrue(git.status().call().getChanged().isEmpty());
+            assertTrue(git.status().call().getModified().contains("file.txt")); //$NON-NLS-1$
+            assertTrue(git.stashList().call().isEmpty());
+        }
+    }
+
+    @Test
+    public void checkoutConflictRestoresLocalFilesAndIndex() throws Exception
+    {
+        for (boolean prepareFile : new boolean[] {false, true})
+        {
+            Path work = Files.createTempDirectory("gitflow-checkout-mixed-conflict-"); //$NON-NLS-1$
+            try (Git git = Git.init().setDirectory(work.toFile()).call())
+            {
+                commit(git, work, "base\n"); //$NON-NLS-1$
+                String original = git.getRepository().getBranch();
+                ObjectId originalHead = git.getRepository().resolve("HEAD"); //$NON-NLS-1$
+                git.checkout().setCreateBranch(true).setName("target").call(); //$NON-NLS-1$
+                commit(git, work, "target\n"); //$NON-NLS-1$
+                ObjectId targetHead = git.getRepository().resolve("HEAD"); //$NON-NLS-1$
+                git.checkout().setName(original).call();
+                if (prepareFile)
+                {
+                    Files.writeString(work.resolve("file.txt"), "staged\n"); //$NON-NLS-1$ //$NON-NLS-2$
+                    git.add().addFilepattern("file.txt").call(); //$NON-NLS-1$
+                }
+                ObjectId staged = git.getRepository().readDirCache().getEntry("file.txt").getObjectId(); //$NON-NLS-1$
+                Files.writeString(work.resolve("file.txt"), "unstaged\n"); //$NON-NLS-1$ //$NON-NLS-2$
+                Files.writeString(work.resolve("note.txt"), "new local file\n"); //$NON-NLS-1$ //$NON-NLS-2$
+                WorkingChanges before = WorkingChanges.read(git.getRepository());
+
+                OperationResult result = BranchOperations.checkout(git.getRepository(), "target", false, //$NON-NLS-1$
+                    new NullProgressMonitor());
+
+                assertEquals(result.toString(), OperationResult.Kind.NEEDS_CHECKOUT_CLEANUP, result.kind());
+                assertEquals(original, git.getRepository().getBranch());
+                assertEquals(originalHead, git.getRepository().resolve("HEAD")); //$NON-NLS-1$
+                assertEquals(targetHead, git.getRepository().resolve("refs/heads/target")); //$NON-NLS-1$
+                assertEquals("unstaged\n", Files.readString(work.resolve("file.txt"))); //$NON-NLS-1$ //$NON-NLS-2$
+                assertEquals("new local file\n", Files.readString(work.resolve("note.txt"))); //$NON-NLS-1$ //$NON-NLS-2$
+                assertEquals(staged, git.getRepository().readDirCache().getEntry("file.txt").getObjectId()); //$NON-NLS-1$
+                assertEquals(before, WorkingChanges.read(git.getRepository()));
+                assertTrue(git.stashList().call().isEmpty());
+            }
+        }
+    }
+
+    @Test
+    public void cleanCheckoutDoesNotCreateStash() throws Exception
+    {
+        Path work = Files.createTempDirectory("gitflow-clean-checkout-"); //$NON-NLS-1$
+        try (Git git = Git.init().setDirectory(work.toFile()).call())
+        {
+            Files.writeString(work.resolve("file.txt"), "base"); //$NON-NLS-1$ //$NON-NLS-2$
+            git.add().addFilepattern(".").call(); //$NON-NLS-1$
+            git.commit().setMessage("base").setAuthor("Test", "test@example.org") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                .setCommitter("Test", "test@example.org").call(); //$NON-NLS-1$ //$NON-NLS-2$
+            git.branchCreate().setName("feature").call(); //$NON-NLS-1$
+            assertTrue(BranchOperations.checkout(git.getRepository(), "feature", false, //$NON-NLS-1$
+                new NullProgressMonitor()).succeeded());
+            assertEquals("feature", git.getRepository().getBranch()); //$NON-NLS-1$
+            assertTrue(git.stashList().call().isEmpty());
+            assertTrue(git.status().call().isClean());
+        }
+    }
+
+    @Test
     public void checkoutKeepsStagedAndUnstagedFilesInTheirGroups() throws Exception
     {
         Path work = Files.createTempDirectory("gitflow-switch-index-"); //$NON-NLS-1$

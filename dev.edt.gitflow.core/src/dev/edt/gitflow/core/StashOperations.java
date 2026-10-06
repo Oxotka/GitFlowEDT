@@ -40,8 +40,6 @@ public final class StashOperations
         try
         {
             Git git = Git.wrap(repository); // EGit owns the repository; do not close it here.
-            if (git.status().call().isClean())
-                return new Result(Outcome.NO_CHANGES, null);
             monitor.worked(1);
             String name = "WIP @ " + repository.getBranch() + " " + DATE_FORMAT.format(LocalDateTime.now()); //$NON-NLS-1$ //$NON-NLS-2$
             RevCommit stash = git.stashCreate().setIncludeUntracked(includeUntracked)

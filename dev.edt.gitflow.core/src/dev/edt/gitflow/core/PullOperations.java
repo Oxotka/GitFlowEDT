@@ -80,6 +80,12 @@ public final class PullOperations
     public static OperationResult smartPull(Repository repository, boolean confirmTrack,
         IProgressMonitor monitor)
     {
+        return smartPull(repository, confirmTrack, monitor, false);
+    }
+
+    private static OperationResult smartPull(Repository repository, boolean confirmTrack,
+        IProgressMonitor monitor, boolean alreadyFetched)
+    {
         if (!RepositorySupport.isSafe(repository))
             return new OperationResult(Kind.ERROR, "Репозиторий занят другой Git-операцией."); //$NON-NLS-1$
         try
@@ -108,7 +114,8 @@ public final class PullOperations
 
             ObjectId previousTracking = repository.resolve(tracking);
             monitor.subTask("Получение из " + remote); //$NON-NLS-1$
-            git.fetch().setRemote(remote).call();
+            if (!alreadyFetched)
+                git.fetch().setRemote(remote).call();
             monitor.worked(1);
             if (monitor.isCanceled())
                 return new OperationResult(Kind.CANCELLED, "Синхронизация отменена после fetch."); //$NON-NLS-1$
@@ -210,7 +217,7 @@ public final class PullOperations
                 return new OperationResult(Kind.ERROR,
                     "В origin нет ветки " + name + ". Для первой отправки используйте умную отправку."); //$NON-NLS-1$ //$NON-NLS-2$
             configureUpstream(repository, name);
-            return smartPull(repository, false, monitor);
+            return smartPull(repository, false, monitor, true);
         }
         catch (GitAPIException | IOException e)
         {
@@ -226,6 +233,12 @@ public final class PullOperations
     public static OperationResult smartPush(Repository repository, boolean confirmPublish,
         IProgressMonitor monitor)
     {
+        return smartPush(repository, confirmPublish, monitor, false);
+    }
+
+    private static OperationResult smartPush(Repository repository, boolean confirmPublish,
+        IProgressMonitor monitor, boolean alreadyFetched)
+    {
         try
         {
             String name = repository.getBranch();
@@ -237,7 +250,7 @@ public final class PullOperations
         {
             return new OperationResult(Kind.ERROR, e.getMessage());
         }
-        OperationResult pulled = smartPull(repository, monitor);
+        OperationResult pulled = smartPull(repository, false, monitor, alreadyFetched);
         if (!pulled.succeeded())
             return pulled;
         if (monitor.isCanceled())
@@ -293,7 +306,7 @@ public final class PullOperations
             if (repository.resolve("refs/remotes/origin/" + name) != null) //$NON-NLS-1$
             {
                 configureUpstream(repository, name);
-                return smartPush(repository, true, monitor);
+                return smartPush(repository, true, monitor, true);
             }
             int updated = push(git, "origin", name, "refs/heads/" + name); //$NON-NLS-1$ //$NON-NLS-2$
             if (updated < 0)

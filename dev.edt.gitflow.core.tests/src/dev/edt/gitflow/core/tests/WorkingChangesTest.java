@@ -17,6 +17,38 @@ import dev.edt.gitflow.core.WorkingChanges;
 public class WorkingChangesTest
 {
     @Test
+    public void stagesCachedSelectionWithoutIncludingLaterChanges() throws Exception
+    {
+        Path work = Files.createTempDirectory("gitflow-cached-stage-"); //$NON-NLS-1$
+        try (Git git = Git.init().setDirectory(work.toFile()).call())
+        {
+            Files.writeString(work.resolve("modified.txt"), "base"); //$NON-NLS-1$ //$NON-NLS-2$
+            Files.writeString(work.resolve("deleted.txt"), "base"); //$NON-NLS-1$ //$NON-NLS-2$
+            git.add().addFilepattern(".").call(); //$NON-NLS-1$
+            git.commit().setMessage("base").setAuthor("Test", "test@example.org") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                .setCommitter("Test", "test@example.org").call(); //$NON-NLS-1$ //$NON-NLS-2$
+            Files.writeString(work.resolve("modified.txt"), "changed"); //$NON-NLS-1$ //$NON-NLS-2$
+            Files.delete(work.resolve("deleted.txt")); //$NON-NLS-1$
+            Files.writeString(work.resolve("new.txt"), "new"); //$NON-NLS-1$ //$NON-NLS-2$
+            var selection = WorkingChanges.read(git.getRepository()).unstaged();
+            Files.writeString(work.resolve("later.txt"), "keep out"); //$NON-NLS-1$ //$NON-NLS-2$
+
+            assertTrue(WorkingChanges.stage(git.getRepository(), selection).succeeded());
+            var status = git.status().call();
+            assertTrue(status.getChanged().contains("modified.txt")); //$NON-NLS-1$
+            assertTrue(status.getRemoved().contains("deleted.txt")); //$NON-NLS-1$
+            assertTrue(status.getAdded().contains("new.txt")); //$NON-NLS-1$
+            assertTrue(status.getUntracked().contains("later.txt")); //$NON-NLS-1$
+
+            assertTrue(WorkingChanges.unstage(git.getRepository(),
+                selection.stream().map(WorkingChanges.FileChange::path).toList()).succeeded());
+            assertTrue(WorkingChanges.read(git.getRepository()).staged().isEmpty());
+            assertEquals("changed", Files.readString(work.resolve("modified.txt"))); //$NON-NLS-1$ //$NON-NLS-2$
+            assertFalse(Files.exists(work.resolve("deleted.txt"))); //$NON-NLS-1$
+        }
+    }
+
+    @Test
     public void stageAndUnstageKeepOtherChangesSeparate() throws Exception
     {
         Path work = Files.createTempDirectory("gitflow-changes-"); //$NON-NLS-1$

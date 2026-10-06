@@ -59,14 +59,10 @@ public final class BranchOperations
             if (startPoint != null && (!create || !startPoint.startsWith("refs/remotes/") //$NON-NLS-1$
                 || repository.resolve(startPoint) == null))
                 return new OperationResult(Kind.ERROR, "Удалённая ветка не найдена: " + startPoint); //$NON-NLS-1$
-            if (!git.status().call().isClean())
-            {
-                monitor.subTask("Сохранение локальных изменений"); //$NON-NLS-1$
-                RevCommit stash = git.stashCreate().setIncludeUntracked(true).call();
-                if (stash == null)
-                    return new OperationResult(Kind.ERROR, "Не удалось сохранить локальные изменения."); //$NON-NLS-1$
+            monitor.subTask("Сохранение локальных изменений"); //$NON-NLS-1$
+            RevCommit stash = git.stashCreate().setIncludeUntracked(true).call();
+            if (stash != null)
                 stashId = stash.getId().name();
-            }
             monitor.worked(1);
             try
             {
@@ -97,9 +93,10 @@ public final class BranchOperations
                 {
                     if (restored.outcome() == StashOperations.Outcome.CONFLICTS)
                     {
-                        List<String> conflicts = new ArrayList<>(git.status().call().getConflicting());
+                        var status = git.status().call();
+                        List<String> conflicts = new ArrayList<>(status.getConflicting());
                         if (conflicts.isEmpty())
-                            conflicts.addAll(git.status().call().getModified());
+                            conflicts.addAll(status.getModified());
                         try
                         {
                             git.reset().setMode(ResetType.HARD).call();

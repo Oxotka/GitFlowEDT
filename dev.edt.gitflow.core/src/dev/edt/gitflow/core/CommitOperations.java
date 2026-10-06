@@ -2,13 +2,16 @@ package dev.edt.gitflow.core;
 
 import java.io.IOException;
 import java.util.Set;
+import java.util.HashSet;
 
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.jgit.api.Git;
-import org.eclipse.jgit.api.Status;
+import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.RepositoryState;
+import org.eclipse.jgit.lib.Constants;
+import org.eclipse.jgit.treewalk.EmptyTreeIterator;
 
 import dev.edt.gitflow.core.OperationResult.Kind;
 
@@ -18,6 +21,22 @@ public final class CommitOperations
 
     private CommitOperations()
     {
+    }
+
+    public static Set<String> stagedPaths(Repository repository) throws GitAPIException, IOException
+    {
+        var diff = Git.wrap(repository).diff().setCached(true).setShowNameAndStatusOnly(true);
+        if (repository.resolve(Constants.HEAD) == null)
+            diff.setOldTree(new EmptyTreeIterator());
+        Set<String> paths = new HashSet<>();
+        for (DiffEntry entry : diff.call())
+        {
+            if (!DiffEntry.DEV_NULL.equals(entry.getOldPath()))
+                paths.add(entry.getOldPath());
+            if (!DiffEntry.DEV_NULL.equals(entry.getNewPath()))
+                paths.add(entry.getNewPath());
+        }
+        return paths;
     }
 
     public static OperationResult safeCommit(Repository repository, String message, boolean stageTracked,
@@ -39,20 +58,20 @@ public final class CommitOperations
             if (PROTECTED_BRANCHES.contains(branch) && !confirmProtected)
                 return new OperationResult(Kind.NEEDS_CONFIRMATION,
                     "Создать коммит в защищённой ветке " + branch + "?"); //$NON-NLS-1$ //$NON-NLS-2$
-            Status status = git.status().call();
-            if (status.isClean() && !mergeReady)
-                return new OperationResult(Kind.NO_CHANGE, "Изменений для коммита нет."); //$NON-NLS-1$
             if (stageTracked)
+            {
+                monitor.subTask("Подготавливаем отслеживаемые изменения"); //$NON-NLS-1$
                 git.add().setUpdate(true).addFilepattern(".").call(); //$NON-NLS-1$
+            }
             monitor.worked(1);
             if (monitor.isCanceled())
                 return new OperationResult(Kind.CANCELLED, "Коммит отменён."); //$NON-NLS-1$
-            Status staged = git.status().call();
-            if (!mergeReady && staged.getAdded().isEmpty() && staged.getChanged().isEmpty()
-                && staged.getRemoved().isEmpty())
-                return new OperationResult(Kind.ERROR, "Нет подготовленных отслеживаемых изменений."); //$NON-NLS-1$
+            monitor.subTask("Проверяем подготовленные изменения"); //$NON-NLS-1$
+            if (!mergeReady && stagedPaths(repository).isEmpty())
+                return new OperationResult(Kind.NO_CHANGE, "Нет подготовленных отслеживаемых изменений."); //$NON-NLS-1$
             if (monitor.isCanceled())
                 return new OperationResult(Kind.CANCELLED, "Коммит отменён."); //$NON-NLS-1$
+            monitor.subTask("Создаём коммит"); //$NON-NLS-1$
             git.commit().setMessage(message).call();
             monitor.worked(1);
             return new OperationResult(Kind.SUCCESS, "Коммит создан в ветке " + branch + ".", false, true); //$NON-NLS-1$ //$NON-NLS-2$

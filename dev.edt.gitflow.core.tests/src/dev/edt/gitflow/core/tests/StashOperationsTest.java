@@ -18,6 +18,22 @@ import dev.edt.gitflow.core.StashOperations.Outcome;
 public class StashOperationsTest
 {
     @Test
+    public void cleanRepositoryDoesNotCreateStash() throws Exception
+    {
+        Path work = Files.createTempDirectory("gitflow-clean-stash-"); //$NON-NLS-1$
+        try (Git git = Git.init().setDirectory(work.toFile()).call())
+        {
+            Files.writeString(work.resolve("file.txt"), "base"); //$NON-NLS-1$ //$NON-NLS-2$
+            git.add().addFilepattern(".").call(); //$NON-NLS-1$
+            git.commit().setMessage("base").setAuthor("Test", "test@example.org") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                .setCommitter("Test", "test@example.org").call(); //$NON-NLS-1$ //$NON-NLS-2$
+            assertEquals(Outcome.NO_CHANGES,
+                StashOperations.quickStash(git.getRepository(), true, new NullProgressMonitor()).outcome());
+            assertTrue(git.stashList().call().isEmpty());
+        }
+    }
+
+    @Test
     public void restoresTrackedAndUntrackedFiles() throws Exception
     {
         Path directory = Files.createTempDirectory("gitflow-stash-"); //$NON-NLS-1$

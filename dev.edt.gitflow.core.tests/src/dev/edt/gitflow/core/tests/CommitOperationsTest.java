@@ -20,6 +20,35 @@ import dev.edt.gitflow.core.OperationResult;
 public class CommitOperationsTest
 {
     @Test
+    public void commitsOnlyIndexAndSupportsFirstCommit() throws Exception
+    {
+        Path work = Files.createTempDirectory("gitflow-index-commit-"); //$NON-NLS-1$
+        try (Git git = Git.init().setDirectory(work.toFile()).call())
+        {
+            Files.writeString(work.resolve("file.txt"), "first"); //$NON-NLS-1$ //$NON-NLS-2$
+            git.add().addFilepattern("file.txt").call(); //$NON-NLS-1$
+            assertEquals(java.util.Set.of("file.txt"), CommitOperations.stagedPaths(git.getRepository())); //$NON-NLS-1$
+            assertTrue(CommitOperations.safeCommit(git.getRepository(), "first", false, true, //$NON-NLS-1$
+                new NullProgressMonitor()).succeeded());
+            Files.writeString(work.resolve("file.txt"), "prepared"); //$NON-NLS-1$ //$NON-NLS-2$
+            git.add().addFilepattern("file.txt").call(); //$NON-NLS-1$
+            Files.writeString(work.resolve("file.txt"), "leave unstaged"); //$NON-NLS-1$ //$NON-NLS-2$
+            Files.writeString(work.resolve("new.txt"), "keep out"); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue(CommitOperations.safeCommit(git.getRepository(), "prepared", false, true, //$NON-NLS-1$
+                new NullProgressMonitor()).succeeded());
+            assertTrue(CommitOperations.stagedPaths(git.getRepository()).isEmpty());
+            assertEquals("prepared", new String(git.getRepository().open( //$NON-NLS-1$
+                git.getRepository().resolve("HEAD:file.txt")).getBytes(), java.nio.charset.StandardCharsets.UTF_8)); //$NON-NLS-1$
+            assertTrue(git.status().call().getModified().contains("file.txt")); //$NON-NLS-1$
+            assertTrue(git.status().call().getUntracked().contains("new.txt")); //$NON-NLS-1$
+            assertEquals(dev.edt.gitflow.core.OperationResult.Kind.NO_CHANGE,
+                CommitOperations.safeCommit(git.getRepository(), "empty", false, true, //$NON-NLS-1$
+                    new NullProgressMonitor()).kind());
+            assertEquals("prepared", git.log().setMaxCount(1).call().iterator().next().getShortMessage()); //$NON-NLS-1$
+        }
+    }
+
+    @Test
     public void commitAndPushPublishesWithoutIncludingUntrackedFile() throws Exception
     {
         Path root = Files.createTempDirectory("gitflow-commit-push-"); //$NON-NLS-1$

@@ -4,7 +4,6 @@ import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
 
@@ -15,7 +14,6 @@ import org.eclipse.core.runtime.Status;
 import org.eclipse.core.runtime.jobs.Job;
 import org.eclipse.egit.core.internal.job.RuleUtil;
 import org.eclipse.jface.dialogs.MessageDialog;
-import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
@@ -156,7 +154,7 @@ final class StagingSmartPush
             {
                 try
                 {
-                    Set<String> stagedPaths = stagedPaths(repository);
+                    Set<String> stagedPaths = dev.edt.gitflow.core.CommitOperations.stagedPaths(repository);
                     Display.getDefault().asyncExec(() ->
                     {
                         if (button.isDisposed())
@@ -167,7 +165,7 @@ final class StagingSmartPush
                             continueClicked(view, button, commit, enable, repository, stagedPaths);
                     });
                 }
-                catch (GitAPIException | RuntimeException e)
+                catch (GitAPIException | IOException | RuntimeException e)
                 {
                     Display.getDefault().asyncExec(() ->
                     {
@@ -260,15 +258,6 @@ final class StagingSmartPush
             log("Не удалось определить репозиторий индексирования.", e); //$NON-NLS-1$
             return null;
         }
-    }
-
-    private static Set<String> stagedPaths(Repository repository) throws GitAPIException
-    {
-        var status = Git.wrap(repository).status().call();
-        Set<String> paths = new HashSet<>(status.getAdded());
-        paths.addAll(status.getChanged());
-        paths.addAll(status.getRemoved());
-        return paths;
     }
 
     private static void push(ViewPart view, Button button, Repository repository,
