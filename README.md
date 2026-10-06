@@ -5,7 +5,7 @@ Git Flow помогает работать с Git прямо в 1C:EDT. В от�
 и отправить изменения. Частые операции, для которых обычно нужно открывать
 несколько окон, собраны в одном месте.
 
-[**Скачать плагин**](https://github.com/Oxotka/git-flow-edt/releases/latest) · [Видеообзор](https://youtu.be/GiZ9AKqpAUU) · [Сообщить об ошибке](https://github.com/Oxotka/git-flow-edt/issues/new?template=bug_report.yml)
+[**Скачать плагин**](https://github.com/Oxotka/git-flow-edt/releases/latest) · [Видеообзор](https://youtu.be/GiZ9AKqpAUU) · [Telegram автора](https://t.me/AriN1C) · [Сообщить об ошибке](https://github.com/Oxotka/git-flow-edt/issues/new?template=bug_report.yml)
 
 ![Панель Git Flow в 1C:EDT: подготовка файлов, сообщение коммита и граф истории](docs/images/git-flow-edt.jpg)
 
