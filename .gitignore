@@ -7,3 +7,7 @@ bin/
 
 # OS
 .DS_Store
+
+# Local distribution archives and agent instructions
+dist/
+AGENTS.md
