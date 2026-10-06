@@ -5,13 +5,13 @@ Git Flow помогает работать с Git прямо в 1C:EDT. В от�
 и отправить изменения. Частые операции, для которых обычно нужно открывать
 несколько окон, собраны в одном месте.
 
-[**Скачать плагин**](https://github.com/Oxotka/GitFlowEDT/releases/latest) · [Видеообзор](https://youtu.be/GiZ9AKqpAUU) · [Сообщить об ошибке](https://github.com/Oxotka/GitFlowEDT/issues/new?template=bug_report.yml)
+[**Скачать плагин**](https://github.com/Oxotka/git-flow-edt/releases/latest) · [Видеообзор](https://youtu.be/GiZ9AKqpAUU) · [Сообщить об ошибке](https://github.com/Oxotka/git-flow-edt/issues/new?template=bug_report.yml)
 
 ![Панель Git Flow в 1C:EDT: подготовка файлов, сообщение коммита и граф истории](docs/images/git-flow-edt.jpg)
 
 ## Установка в EDT
 
-Скачайте ZIP-архив Git Flow из [последнего релиза](https://github.com/Oxotka/GitFlowEDT/releases/latest). Это один и тот же архив для Windows и macOS. ZIP не нужно
+Скачайте ZIP-архив Git Flow из [последнего релиза](https://github.com/Oxotka/git-flow-edt/releases/latest). Это один и тот же архив для Windows и macOS. ZIP не нужно
 распаковывать или копировать в папку `plugins`.
 
 1. В EDT откройте **Справка → Установить новое ПО… → Добавить… → Архив…**.
@@ -116,7 +116,7 @@ mvn verify
 
 ## Обратная связь
 
-Нашли ошибку или хотите предложить улучшение? Создайте [issue](https://github.com/Oxotka/GitFlowEDT/issues).
+Нашли ошибку или хотите предложить улучшение? Создайте [issue](https://github.com/Oxotka/git-flow-edt/issues).
 Для ошибки укажите версии EDT и плагина, операционную систему и шаги воспроизведения.
 
 ## Лицензия
