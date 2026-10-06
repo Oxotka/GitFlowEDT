@@ -7,6 +7,8 @@ Git Flow помогает работать с Git прямо в 1C:EDT. В от�
 
 [**Скачать плагин**](https://github.com/Oxotka/GitFlowEDT/releases/latest) · [Видеообзор](https://youtu.be/GiZ9AKqpAUU) · [Сообщить об ошибке](https://github.com/Oxotka/GitFlowEDT/issues/new?template=bug_report.yml)
 
+![Панель Git Flow в 1C:EDT: подготовка файлов, сообщение коммита и граф истории](docs/images/git-flow-edt.jpg)
+
 ## Установка в EDT
 
 Скачайте ZIP-архив Git Flow из [последнего релиза](https://github.com/Oxotka/GitFlowEDT/releases/latest). Это один и тот же архив для Windows и macOS. ZIP не нужно
