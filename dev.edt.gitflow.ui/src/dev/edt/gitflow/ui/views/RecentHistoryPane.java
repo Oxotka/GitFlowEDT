@@ -247,6 +247,7 @@ final class RecentHistoryPane extends Composite
             int lineHeight = gc.getFontMetrics().getHeight();
             gc.drawText(first, x, y, true);
             String labels = entry.labels().isEmpty() ? "" : String.join("  ↔  ", entry.labels()); //$NON-NLS-1$ //$NON-NLS-2$
+            labels = ellipsize(gc, labels, Math.max(0, width / 2 - 12));
             int labelWidth = labels.isEmpty() ? 0 : gc.textExtent(labels).x + 12;
             int contentWidth = Math.max(0, width - labelWidth - (labelWidth == 0 ? 0 : 8));
             String author;

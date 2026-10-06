@@ -5,7 +5,13 @@ Git Flow помогает работать с Git прямо в 1C:EDT. В от�
 и отправить изменения. Частые операции, для которых обычно нужно открывать
 несколько окон, собраны в одном месте.
 
-Текущий релиз — **0.10.10**. Изменения описаны в [CHANGELOG.md](CHANGELOG.md).
+Текущий релиз — **0.10.11**. Изменения описаны в [CHANGELOG.md](CHANGELOG.md).
+
+## Видеообзор
+
+[![Смотреть видеообзор Git Flow для 1C:EDT](https://img.youtube.com/vi/GiZ9AKqpAUU/hqdefault.jpg)](https://youtu.be/GiZ9AKqpAUU)
+
+[Смотреть на YouTube](https://youtu.be/GiZ9AKqpAUU).
 
 ## Что умеет плагин
 
