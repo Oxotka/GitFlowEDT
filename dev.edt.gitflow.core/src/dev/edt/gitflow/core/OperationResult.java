@@ -13,6 +13,9 @@ public record OperationResult(Kind kind, String message, boolean workspaceChange
 
     public OperationResult
     {
+        if (message != null && message.endsWith(".") //$NON-NLS-1$
+            && !message.substring(0, message.length() - 1).matches("(?s).*[.!?]\\s+.*")) //$NON-NLS-1$
+            message = message.substring(0, message.length() - 1);
         affectedPaths = affectedPaths == null ? List.of() : List.copyOf(affectedPaths);
     }
 

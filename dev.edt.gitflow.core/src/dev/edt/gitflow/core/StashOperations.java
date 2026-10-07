@@ -90,7 +90,7 @@ public final class StashOperations
             Git git = Git.wrap(repository);
             Collection<RevCommit> stashes = git.stashList().call();
             if (stashes.isEmpty() || !stashes.iterator().next().getId().name().equals(stashId))
-                return new Result(Outcome.ERROR, "Список стешей изменился. Стеш не применён."); //$NON-NLS-1$
+                return new Result(Outcome.ERROR, "Список стешей изменился. Стеш не применен."); //$NON-NLS-1$
             try
             {
                 git.stashApply().setStashRef(stashId).setRestoreIndex(true)
@@ -103,7 +103,7 @@ public final class StashOperations
             // The stash may have changed outside this Job; never drop a different entry.
             Collection<RevCommit> current = git.stashList().call();
             if (current.isEmpty() || !current.iterator().next().getId().name().equals(stashId))
-                return new Result(Outcome.ERROR, "Изменения восстановлены, но список стешей изменился. Стеш сохранён."); //$NON-NLS-1$
+                return new Result(Outcome.ERROR, "Изменения восстановлены, но список стешей изменился. Стеш сохранен."); //$NON-NLS-1$
             git.stashDrop().setStashRef(0).call();
             return new Result(Outcome.APPLIED, null);
         }

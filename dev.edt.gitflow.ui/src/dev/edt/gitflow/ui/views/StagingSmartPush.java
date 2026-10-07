@@ -211,7 +211,7 @@ final class StagingSmartPush
                 }
                 catch (ReflectiveOperationException | IOException e)
                 {
-                    log("Коммит сохранён локально, но Smart Push не запущен.", e); //$NON-NLS-1$
+                    log("Коммит сохранен локально, но Smart Push не запущен.", e); //$NON-NLS-1$
                 }
             };
             if (!Boolean.TRUE.equals(commit.invoke(view, false, afterCommit)))
@@ -229,7 +229,7 @@ final class StagingSmartPush
             }
             Throwable cause = e instanceof InvocationTargetException invocation
                 ? invocation.getCause() : e;
-            log("Адаптер кнопки Smart Push отключён.", cause); //$NON-NLS-1$
+            log("Адаптер кнопки Smart Push отключен.", cause); //$NON-NLS-1$
             restoreNativeButton(button);
             MessageDialog.openError(view.getSite().getShell(), "Git Flow", //$NON-NLS-1$
                 "Операция не запущена: " + cause.getMessage()); //$NON-NLS-1$
@@ -334,13 +334,13 @@ final class StagingSmartPush
             NativePullLauncher.start(repository, "Smart Push"); //$NON-NLS-1$
         else if (result.kind() == OperationResult.Kind.CANCELLED)
             view.getViewSite().getActionBars().getStatusLineManager()
-                .setMessage((committed ? "Коммит сохранён локально. " : "") + result.message()); //$NON-NLS-1$ //$NON-NLS-2$
+                .setMessage((committed ? "Коммит сохранен локально. " : "") + result.message()); //$NON-NLS-1$ //$NON-NLS-2$
         else if (result.succeeded())
             view.getViewSite().getActionBars().getStatusLineManager()
                 .setMessage((committed ? "Коммит создан. " : "") + result.message()); //$NON-NLS-1$ //$NON-NLS-2$
         else
             MessageDialog.openError(view.getSite().getShell(), "Git Flow", //$NON-NLS-1$
-                (committed ? "Коммит сохранён локально. " : "") + result.message()); //$NON-NLS-1$ //$NON-NLS-2$
+                (committed ? "Коммит сохранен локально. " : "") + result.message()); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     private static void log(String message, Throwable error)

@@ -17,6 +17,23 @@ import dev.edt.gitflow.core.WorkingChanges;
 public class WorkingChangesTest
 {
     @Test
+    public void cancelledPreparationLeavesIndexUntouched() throws Exception
+    {
+        Path work = Files.createTempDirectory("gitflow-cancel-stage-"); //$NON-NLS-1$
+        try (Git git = Git.init().setDirectory(work.toFile()).call())
+        {
+            Files.writeString(work.resolve("new.txt"), "new"); //$NON-NLS-1$ //$NON-NLS-2$
+            var selection = WorkingChanges.read(git.getRepository()).unstaged();
+            var monitor = new org.eclipse.core.runtime.NullProgressMonitor();
+            monitor.setCanceled(true);
+            assertEquals(dev.edt.gitflow.core.OperationResult.Kind.CANCELLED,
+                WorkingChanges.stage(git.getRepository(), selection, monitor).kind());
+            assertTrue(git.status().call().getAdded().isEmpty());
+            assertTrue(git.status().call().getUntracked().contains("new.txt")); //$NON-NLS-1$
+        }
+    }
+
+    @Test
     public void stagesCachedSelectionWithoutIncludingLaterChanges() throws Exception
     {
         Path work = Files.createTempDirectory("gitflow-cached-stage-"); //$NON-NLS-1$
@@ -33,7 +50,7 @@ public class WorkingChangesTest
             var selection = WorkingChanges.read(git.getRepository()).unstaged();
             Files.writeString(work.resolve("later.txt"), "keep out"); //$NON-NLS-1$ //$NON-NLS-2$
 
-            assertTrue(WorkingChanges.stage(git.getRepository(), selection).succeeded());
+            assertTrue(WorkingChanges.stage(git.getRepository(), selection, new org.eclipse.core.runtime.NullProgressMonitor()).succeeded());
             var status = git.status().call();
             assertTrue(status.getChanged().contains("modified.txt")); //$NON-NLS-1$
             assertTrue(status.getRemoved().contains("deleted.txt")); //$NON-NLS-1$

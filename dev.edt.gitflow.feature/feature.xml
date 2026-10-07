@@ -2,7 +2,7 @@
 <feature
       id="dev.edt.gitflow.feature"
       label="Git Flow"
-      version="0.10.14"
+      version="0.11.3"
       provider-name="Git Flow Contributors">
    <description>Git operations for 1C:Enterprise Development Tools.</description>
    <plugin id="dev.edt.gitflow.core" download-size="0" install-size="0"

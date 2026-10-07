@@ -92,7 +92,7 @@ public final class PullOperations
         {
             BranchConfig branch = new BranchConfig(repository.getConfig(), repository.getBranch());
             if (branch.getRemote() == null || branch.getRemoteTrackingBranch() == null)
-                return trackAndPull(repository, confirmTrack, monitor);
+                return trackAndPull(repository, monitor);
         }
         catch (IOException e)
         {
@@ -129,7 +129,7 @@ public final class PullOperations
             {
                 if (head != null && walk.isMergedInto(walk.parseCommit(upstream), walk.parseCommit(head)))
                     return new OperationResult(Kind.NO_CHANGE,
-                        "Удалённая ветка актуальна; локальные изменения не затронуты."); //$NON-NLS-1$
+                        "Удаленная ветка актуальна; локальные изменения не затронуты."); //$NON-NLS-1$
             }
 
             Status localStatus = git.status().call();
@@ -139,7 +139,7 @@ public final class PullOperations
                 Set<String> workingOverlaps = overlappingWorkingPaths(repository, head, upstream, localStatus);
                 if (workingOverlaps.isEmpty() && diverged(repository, head, upstream))
                     return new OperationResult(Kind.NEEDS_NATIVE_MERGE,
-                        "Локальные и удалённые коммиты меняют одни файлы. Запускается штатное слияние EDT."); //$NON-NLS-1$
+                        "Локальные и удаленные коммиты меняют одни файлы. Запускается штатное слияние EDT."); //$NON-NLS-1$
                 return new OperationResult(Kind.CONFLICT,
                     overlapMessage(workingOverlaps.isEmpty() ? overlaps : workingOverlaps));
             }
@@ -168,10 +168,10 @@ public final class PullOperations
                 StashOperations.Result restored = StashOperations.applyAndDrop(repository, stashId);
                 if (restored.outcome() != StashOperations.Outcome.APPLIED)
                     return new OperationResult(Kind.CONFLICT,
-                        "Rebase отменён, но локальные изменения не восстановлены: " + restored.detail() //$NON-NLS-1$
-                            + " Стеш сохранён.", true); //$NON-NLS-1$
+                        "Rebase отменен, но локальные изменения не восстановлены: " + restored.detail() //$NON-NLS-1$
+                            + " Стеш сохранен.", true); //$NON-NLS-1$
                 return new OperationResult(Kind.CONFLICT,
-                    "Rebase отменён; локальные изменения восстановлены. Штатное слияние EDT не запускалось: " //$NON-NLS-1$
+                    "Rebase отменен; локальные изменения восстановлены. Штатное слияние EDT не запускалось: " //$NON-NLS-1$
                         + rebase.getStatus(), true);
             }
 
@@ -182,7 +182,7 @@ public final class PullOperations
                 if (restored.outcome() != StashOperations.Outcome.APPLIED)
                     return new OperationResult(Kind.CONFLICT,
                         "Обновление прошло, но локальные изменения не восстановлены: " //$NON-NLS-1$
-                            + restored.detail() + " Стеш сохранён.", true); //$NON-NLS-1$
+                            + restored.detail() + " Стеш сохранен.", true); //$NON-NLS-1$
             }
             monitor.worked(1);
             return fetched == 0
@@ -201,7 +201,7 @@ public final class PullOperations
         }
     }
 
-    private static OperationResult trackAndPull(Repository repository, boolean confirmed,
+    private static OperationResult trackAndPull(Repository repository,
         IProgressMonitor monitor)
     {
         if (repository.getConfig().getString("remote", "origin", "url") == null) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
@@ -209,9 +209,6 @@ public final class PullOperations
         try
         {
             String name = repository.getBranch();
-            if (!confirmed)
-                return new OperationResult(Kind.NEEDS_CONFIRMATION,
-                    "У ветки " + name + " не настроена связь с удалённой веткой. Найти её в origin и получать из неё изменения?"); //$NON-NLS-1$ //$NON-NLS-2$
             Git.wrap(repository).fetch().setRemote("origin").call(); //$NON-NLS-1$
             if (repository.resolve("refs/remotes/origin/" + name) == null) //$NON-NLS-1$
                 return new OperationResult(Kind.ERROR,
@@ -244,7 +241,7 @@ public final class PullOperations
             String name = repository.getBranch();
             BranchConfig branch = new BranchConfig(repository.getConfig(), name);
             if (branch.getRemote() == null || branch.getMerge() == null)
-                return publishBranch(repository, name, confirmPublish, monitor);
+                return publishBranch(repository, name, monitor);
         }
         catch (IOException e)
         {
@@ -271,7 +268,7 @@ public final class PullOperations
             int updated = push(git, remote, name, merge);
             if (updated < 0)
                 return new OperationResult(Kind.ERROR,
-                    "Получение прошло, но push отклонён. Повторите умную отправку.", //$NON-NLS-1$
+                    "Получение прошло, но push отклонен. Повторите умную отправку.", //$NON-NLS-1$
                     pulled.workspaceChanged());
             return updated == 0
                 ? new OperationResult(Kind.NO_CHANGE, "Ветка уже синхронизирована.", //$NON-NLS-1$
@@ -288,15 +285,12 @@ public final class PullOperations
     }
 
     private static OperationResult publishBranch(Repository repository, String name,
-        boolean confirmed, IProgressMonitor monitor)
+        IProgressMonitor monitor)
     {
         if (!RepositorySupport.isSafe(repository))
             return new OperationResult(Kind.ERROR, "Репозиторий занят другой Git-операцией."); //$NON-NLS-1$
         if (repository.getConfig().getString("remote", "origin", "url") == null) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             return new OperationResult(Kind.ERROR, "Для публикации ветки настройте remote origin."); //$NON-NLS-1$
-        if (!confirmed)
-            return new OperationResult(Kind.NEEDS_CONFIRMATION,
-                "У ветки " + name + " не настроена связь с удалённой веткой. Найти или создать её в origin и отправить изменения?"); //$NON-NLS-1$ //$NON-NLS-2$
         try
         {
             Git git = Git.wrap(repository);
@@ -460,7 +454,7 @@ public final class PullOperations
     {
         String listed = paths.stream().limit(5).collect(Collectors.joining(", ")); //$NON-NLS-1$
         if (paths.size() > 5)
-            listed += " и ещё " + (paths.size() - 5); //$NON-NLS-1$
+            listed += " и еще " + (paths.size() - 5); //$NON-NLS-1$
         return "Автоматическое получение остановлено: одинаковые файлы изменены локально и в upstream: " //$NON-NLS-1$
             + listed + ". Локальная ветка и рабочие файлы не изменены. Сравните изменения и выполните " //$NON-NLS-1$
             + "merge или rebase вручную."; //$NON-NLS-1$

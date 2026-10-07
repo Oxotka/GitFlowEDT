@@ -184,6 +184,7 @@ public class GitFlowView extends ViewPart
     private ObjectId overviewUpstream;
     private boolean hasRemote;
     private boolean sendAfterCommit;
+    private boolean smartCommit;
     private boolean indexChangeRunning;
     private RepositoryOverview overview = new RepositoryOverview(0, -1, -1);
     private WorkingChanges changes = new WorkingChanges(List.of(), List.of());
@@ -244,6 +245,7 @@ public class GitFlowView extends ViewPart
         layout.marginHeight = 8;
         layout.verticalSpacing = 7;
         parent.setLayout(layout);
+        smartCommit = InstanceScope.INSTANCE.getNode(PLUGIN_ID).getBoolean("smartCommit", false); //$NON-NLS-1$
         sendAfterCommit = InstanceScope.INSTANCE.getNode(PLUGIN_ID)
             .getBoolean("sendAfterCommit", true); //$NON-NLS-1$
 
@@ -730,6 +732,35 @@ public class GitFlowView extends ViewPart
             }
             updatePrimary();
         });
+        MenuItem smart = new MenuItem(menu, SWT.CHECK);
+        smart.setText(Messages.get("smartCommit")); //$NON-NLS-1$
+        smart.setSelection(smartCommit);
+        var hint = new org.eclipse.swt.widgets.ToolTip(anchor.getShell(), SWT.NONE);
+        hint.setMessage(Messages.get("smartCommitHint")); //$NON-NLS-1$
+        smart.addListener(SWT.Arm, event ->
+        {
+            hint.setLocation(anchor.getDisplay().getCursorLocation());
+            hint.setVisible(true);
+        });
+        send.addListener(SWT.Arm, event -> hint.setVisible(false));
+        menu.addListener(SWT.Hide, event -> hint.setVisible(false));
+        menu.addListener(SWT.Dispose, event -> hint.dispose());
+        smart.addListener(SWT.Selection, event ->
+        {
+            smartCommit = smart.getSelection();
+            var preferences = InstanceScope.INSTANCE.getNode(PLUGIN_ID);
+            preferences.putBoolean("smartCommit", smartCommit); //$NON-NLS-1$
+            try
+            {
+                preferences.flush();
+            }
+            catch (BackingStoreException e)
+            {
+                publish(Messages.get("settingSaveFailed") + " " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            fillChangesTree();
+            updatePrimary();
+        });
         menu.addListener(SWT.Hide, event -> anchor.getDisplay().asyncExec(menu::dispose));
         menu.setLocation(anchor.toDisplay(0, anchor.getSize().y));
         menu.setVisible(true);
@@ -844,15 +875,10 @@ public class GitFlowView extends ViewPart
         String remote = repository.getConfig().getString("remote", "origin", "url"); //$NON-NLS-1$ //$NON-NLS-2$
         String provider = GitLinks.providerName(remote);
         if (remote != null && !remote.isBlank())
-            historyItem(menu, provider == null ? "Открыть коммит в удалённом репозитории" //$NON-NLS-1$
+            historyItem(menu, provider == null ? "Открыть коммит в удаленном репозитории" //$NON-NLS-1$
                 : "Открыть коммит в " + provider, //$NON-NLS-1$
                 () -> openCommitLink(entry.hash(), remote));
         new MenuItem(menu, SWT.SEPARATOR);
-        if (historyHead != null && entry.hash().equals(historyHead.name()))
-        {
-            historyItem(menu, Messages.get("mergeBranch"), () -> mergeBranch(repository)) //$NON-NLS-1$
-                .setEnabled(!isRunning(repository));
-        }
         historyItem(menu, "Переключиться на коммит (без ветки)", //$NON-NLS-1$
             () -> BranchOperationUI.checkout(repository, entry.hash(), true).start());
         historyItem(menu, "Создать ветку…", //$NON-NLS-1$
@@ -860,8 +886,14 @@ public class GitFlowView extends ViewPart
         historyItem(menu, "Создать метку…", () -> createTagAt(repository, entry.hash())); //$NON-NLS-1$
         historyItem(menu, "Скопировать коммит (cherry-pick)", () -> cherryPick(repository, entry)); //$NON-NLS-1$
         new MenuItem(menu, SWT.SEPARATOR);
+        if (historyHead != null && entry.hash().equals(historyHead.name()))
+        {
+            historyItem(menu, Messages.get("mergeBranch"), () -> mergeBranch(repository)) //$NON-NLS-1$
+                .setEnabled(!isRunning(repository));
+            new MenuItem(menu, SWT.SEPARATOR);
+        }
         String upstream = upstream(repository);
-        MenuItem remoteCompare = historyItem(menu, "Сравнить с удалённой веткой", //$NON-NLS-1$
+        MenuItem remoteCompare = historyItem(menu, "Сравнить с удаленной веткой", //$NON-NLS-1$
             () -> compareWith(repository, entry.hash(), upstream));
         remoteCompare.setEnabled(upstream != null && resolves(repository, upstream));
         MenuItem mergeBaseCompare = historyItem(menu, "Сравнить с точкой слияния", //$NON-NLS-1$
@@ -874,9 +906,9 @@ public class GitFlowView extends ViewPart
         resetItem.setMenu(resetMenu);
         historyItem(resetMenu, "Мягкий (сохранить подготовленные изменения)", //$NON-NLS-1$
             () -> ResetMenu.performReset(getSite().getShell(), repository, entry.plot().getId(), ResetType.SOFT));
-        historyItem(resetMenu, "Смешанный (вернуть всё в изменения)", //$NON-NLS-1$
+        historyItem(resetMenu, "Смешанный (вернуть все в изменения)", //$NON-NLS-1$
             () -> ResetMenu.performReset(getSite().getShell(), repository, entry.plot().getId(), ResetType.MIXED));
-        historyItem(resetMenu, "Жёсткий (удалить все изменения)", //$NON-NLS-1$
+        historyItem(resetMenu, "Жесткий (удалить все изменения)", //$NON-NLS-1$
             () -> ResetMenu.performReset(getSite().getShell(), repository, entry.plot().getId(), ResetType.HARD));
         new MenuItem(menu, SWT.SEPARATOR);
         historyItem(menu, "Копировать хеш коммита", () -> copyText(entry.hash())); //$NON-NLS-1$
@@ -1559,8 +1591,8 @@ public class GitFlowView extends ViewPart
         try
         {
             changesTree.removeAll();
-            TreeItem staged = fillGroup(changes.staged(), true, stagedExpanded,
-                selectedPath, selectedStaged);
+            TreeItem staged = smartCommit && changes.staged().isEmpty() ? null
+                : fillGroup(changes.staged(), true, stagedExpanded, selectedPath, selectedStaged);
             TreeItem unstaged = fillGroup(changes.unstaged(), false, unstagedExpanded,
                 selectedPath, selectedStaged);
             moved = selectedStaged ? staged : unstaged;
@@ -1863,6 +1895,23 @@ public class GitFlowView extends ViewPart
         };
     }
 
+    private static boolean canPublishBranch(Repository repository)
+    {
+        if (repository == null || repository.getConfig().getString("remote", "origin", "url") == null) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            return false;
+        try
+        {
+            String branch = repository.getFullBranch();
+            return branch != null && branch.startsWith(Constants.R_HEADS)
+                && repository.resolve(Constants.HEAD) != null
+                && new BranchConfig(repository.getConfig(), repository.getBranch()).getRemoteTrackingBranch() == null;
+        }
+        catch (IOException e)
+        {
+            return false;
+        }
+    }
+
     private void updatePrimary()
     {
         Repository repository = selectedRepository();
@@ -1875,14 +1924,19 @@ public class GitFlowView extends ViewPart
             : Messages.get("commitOnly")); //$NON-NLS-1$
         if (hasChanges || mergeReady)
         {
-            boolean tracked = changes.unstaged().stream().anyMatch(change -> !"U".equals(change.state())); //$NON-NLS-1$
             primaryButton.setEnabled(!busy && !messageField.getText().isBlank()
                 && (mergeReady || repositoryState == RepositoryState.SAFE
-                    && (!changes.staged().isEmpty() || tracked)));
+                    && (!changes.staged().isEmpty() || smartCommit && !changes.unstaged().isEmpty())));
         }
         else
         {
-            if (hasRemoteChanges)
+            if (canPublishBranch(repository))
+            {
+                primaryButton.setText(Messages.get("publishBranch")); //$NON-NLS-1$
+                primaryButton.setToolTipText(Messages.get("publishBranchHint")); //$NON-NLS-1$
+                primaryButton.setEnabled(!busy && repositoryState == RepositoryState.SAFE);
+            }
+            else if (hasRemoteChanges)
             {
                 primaryButton.setText(Messages.get("syncChanges") + " " + syncCountsText()); //$NON-NLS-1$
                 primaryButton.setToolTipText(syncTooltip());
@@ -1955,7 +2009,9 @@ public class GitFlowView extends ViewPart
         int count = discardableUnstagedCount();
         String question = count == 1
             ? Messages.get("discardConfirm").replace("{0}", changes.unstaged().stream() //$NON-NLS-1$ //$NON-NLS-2$
-                .filter(change -> !"C".equals(change.state())).findFirst().orElseThrow().path()) //$NON-NLS-1$
+                .filter(change -> !"C".equals(change.state())) //$NON-NLS-1$
+                .map(change -> displayChangePath(change.path()).text())
+                .findFirst().orElseThrow())
             : Messages.get("discardAllConfirm").replace("{0}", Integer.toString(count)); //$NON-NLS-1$ //$NON-NLS-2$
         if (count > 1)
             question += "\n\n" + Messages.get("discardUnstagedWarning"); //$NON-NLS-1$ //$NON-NLS-2$
@@ -1975,20 +2031,49 @@ public class GitFlowView extends ViewPart
         boolean mergeReady = repositoryState == RepositoryState.MERGING_RESOLVED;
         if (!mergeReady && changes.staged().isEmpty() && changes.unstaged().isEmpty())
         {
-            runAdaptiveSync();
+            if (canPublishBranch(repository))
+                OperationJob.schedule(repository, getSite().getShell(), Messages.get("publishBranch"), //$NON-NLS-1$
+                    PullOperations::smartPush, null);
+            else
+                runAdaptiveSync();
             return;
         }
-        boolean stageTracked = !mergeReady && changes.staged().isEmpty();
+        if (!mergeReady && changes.staged().isEmpty() && !smartCommit)
+        {
+            showFeedback(Messages.get("nothingStaged")); //$NON-NLS-1$
+            return;
+        }
+        List<FileChange> autoStage = !mergeReady && changes.staged().isEmpty() && smartCommit
+            ? List.copyOf(changes.unstaged()) : List.of();
         if (!CommitPreparation.saveEditors(repository, getSite().getShell(),
             changes.staged().stream().map(FileChange::path).collect(java.util.stream.Collectors.toSet())))
             return;
         String message = messageField.getText().replace("\r\n", "\n").trim(); //$NON-NLS-1$ //$NON-NLS-2$
         boolean send = sendAfterCommit && hasRemote;
+        String branch;
+        try
+        {
+            branch = repository.getBranch();
+        }
+        catch (IOException e)
+        {
+            MessageDialog.openError(getSite().getShell(), Messages.get("commitAndPush"), e.getMessage()); //$NON-NLS-1$
+            return;
+        }
+        if (CommitOperations.isProtectedBranch(branch) && !confirmProtectedCommit(repository, branch, send))
+            return;
         OperationJob.schedule(repository, getSite().getShell(), Messages.get("commitAndPush"), //$NON-NLS-1$
-            (selected, monitor) -> CommitOperations.commitAndPush(selected, message,
-                stageTracked, send, false, monitor),
-            (selected, monitor) -> CommitOperations.commitAndPush(selected, message,
-                stageTracked, send, true, monitor), result ->
+            (selected, monitor) ->
+            {
+                if (!autoStage.isEmpty())
+                {
+                    OperationResult preparation = WorkingChanges.stage(selected, autoStage, monitor);
+                    if (!preparation.succeeded())
+                        return preparation;
+                }
+                return CommitOperations.commitAndPush(selected, message,
+                    false, send, false, true, monitor);
+            }, null, result ->
             {
                 if (result.commitCreated() && !messageField.isDisposed())
                 {
@@ -1999,6 +2084,34 @@ public class GitFlowView extends ViewPart
                     settingMergeMessage = false;
                 }
             });
+    }
+
+    private boolean confirmProtectedCommit(Repository repository, String branch, boolean send)
+    {
+        String repositoryId = java.util.UUID.nameUUIDFromBytes(repository.getDirectory().getAbsolutePath()
+            .getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
+        var preferences = InstanceScope.INSTANCE.getNode(PLUGIN_ID).node("allowedCommits").node(repositoryId); //$NON-NLS-1$
+        if (preferences.getBoolean(branch, false))
+            return true;
+        String question = Messages.get("protectedCommitQuestion").replace("{0}", branch); //$NON-NLS-1$ //$NON-NLS-2$
+        if (send)
+            question += " " + Messages.get("protectedCommitSend"); //$NON-NLS-1$ //$NON-NLS-2$
+        int answer = new MessageDialog(getSite().getShell(), Messages.get("commitAndPush"), null, //$NON-NLS-1$
+            question, MessageDialog.QUESTION, new String[] {Messages.get("commitOnce"), //$NON-NLS-1$
+                Messages.get("allowAlways"), Messages.get("cancelAction")}, 2).open(); //$NON-NLS-1$ //$NON-NLS-2$
+        if (answer == 1)
+        {
+            preferences.putBoolean(branch, true);
+            try
+            {
+                preferences.flush();
+            }
+            catch (BackingStoreException e)
+            {
+                MessageDialog.openError(getSite().getShell(), Messages.get("commitAndPush"), e.getMessage()); //$NON-NLS-1$
+            }
+        }
+        return answer == 0 || answer == 1;
     }
 
     private void runSync()
@@ -2070,7 +2183,7 @@ public class GitFlowView extends ViewPart
         Repository repository = selectedRepository();
         if (repository == null || isRunning(repository))
             return;
-        String question = Messages.get("discardConfirm").replace("{0}", file.path()); //$NON-NLS-1$ //$NON-NLS-2$
+        String question = Messages.get("discardConfirm").replace("{0}", displayChangePath(file.path()).text()); //$NON-NLS-1$ //$NON-NLS-2$
         if (!confirmDiscard(Messages.get("discardChanges"), question, Messages.get("discardFileAction"))) //$NON-NLS-1$ //$NON-NLS-2$
             return;
         movedPath = null;
@@ -2089,7 +2202,7 @@ public class GitFlowView extends ViewPart
         Repository repository = selectedRepository();
         if (repository == null || isRunning(repository))
             return;
-        String question = Messages.get("deleteNewFileConfirm").replace("{0}", file.path()) + "\n\n" //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        String question = Messages.get("deleteNewFileConfirm").replace("{0}", displayChangePath(file.path()).text()) + "\n\n" //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             + Messages.get("deleteNewFileWarning"); //$NON-NLS-1$
         if (!confirmDiscard(Messages.get("deleteNewFile"), question, Messages.get("deleteFileAction"))) //$NON-NLS-1$ //$NON-NLS-2$
             return;

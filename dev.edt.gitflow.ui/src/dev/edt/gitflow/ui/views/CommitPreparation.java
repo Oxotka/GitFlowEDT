@@ -43,7 +43,7 @@ final class CommitPreparation
         catch (GitAPIException e)
         {
             MessageDialog.openError(shell, "Git Flow", //$NON-NLS-1$
-                "Не удалось подготовить сохранённые файлы: " + e.getMessage()); //$NON-NLS-1$
+                "Не удалось подготовить сохраненные файлы: " + e.getMessage()); //$NON-NLS-1$
             return false;
         }
     }

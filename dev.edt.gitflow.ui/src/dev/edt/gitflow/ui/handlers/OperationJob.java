@@ -184,7 +184,7 @@ public final class OperationJob
         if (value.contains("переключ")) return "Переключаем ветку…"; //$NON-NLS-1$
         if (value.contains("получ") || value.contains("pull") || value.contains("fetch")) return "Получаем изменения…"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         if (value.contains("отправ") || value.contains("push")) return "Отправляем изменения…"; //$NON-NLS-1$ //$NON-NLS-2$
-        if (value.contains("коммит") || value.contains("зафиксир")) return "Создаём коммит…"; //$NON-NLS-1$ //$NON-NLS-2$
+        if (value.contains("коммит") || value.contains("зафиксир")) return "Создаем коммит…"; //$NON-NLS-1$ //$NON-NLS-2$
         if (value.contains("спрят") || value.contains("стеш")) return "Сохраняем локальные изменения…"; //$NON-NLS-1$ //$NON-NLS-2$
         if (value.contains("истори")) return "Обновляем историю…"; //$NON-NLS-1$
         return "Выполняется операция…"; //$NON-NLS-1$

@@ -23,6 +23,11 @@ public final class CommitOperations
     {
     }
 
+    public static boolean isProtectedBranch(String branch)
+    {
+        return PROTECTED_BRANCHES.contains(branch);
+    }
+
     public static Set<String> stagedPaths(Repository repository) throws GitAPIException, IOException
     {
         var diff = Git.wrap(repository).diff().setCached(true).setShowNameAndStatusOnly(true);
@@ -52,12 +57,12 @@ public final class CommitOperations
         try
         {
             if (monitor.isCanceled())
-                return new OperationResult(Kind.CANCELLED, "Коммит отменён."); //$NON-NLS-1$
+                return new OperationResult(Kind.CANCELLED, "Коммит отменен."); //$NON-NLS-1$
             Git git = Git.wrap(repository);
             String branch = repository.getBranch();
             if (PROTECTED_BRANCHES.contains(branch) && !confirmProtected)
                 return new OperationResult(Kind.NEEDS_CONFIRMATION,
-                    "Создать коммит в защищённой ветке " + branch + "?"); //$NON-NLS-1$ //$NON-NLS-2$
+                    "Создать коммит в защищенной ветке " + branch + "?"); //$NON-NLS-1$ //$NON-NLS-2$
             if (stageTracked)
             {
                 monitor.subTask("Подготавливаем отслеживаемые изменения"); //$NON-NLS-1$
@@ -65,13 +70,13 @@ public final class CommitOperations
             }
             monitor.worked(1);
             if (monitor.isCanceled())
-                return new OperationResult(Kind.CANCELLED, "Коммит отменён."); //$NON-NLS-1$
+                return new OperationResult(Kind.CANCELLED, "Коммит отменен."); //$NON-NLS-1$
             monitor.subTask("Проверяем подготовленные изменения"); //$NON-NLS-1$
             if (!mergeReady && stagedPaths(repository).isEmpty())
                 return new OperationResult(Kind.NO_CHANGE, "Нет подготовленных отслеживаемых изменений."); //$NON-NLS-1$
             if (monitor.isCanceled())
-                return new OperationResult(Kind.CANCELLED, "Коммит отменён."); //$NON-NLS-1$
-            monitor.subTask("Создаём коммит"); //$NON-NLS-1$
+                return new OperationResult(Kind.CANCELLED, "Коммит отменен."); //$NON-NLS-1$
+            monitor.subTask("Создаем коммит"); //$NON-NLS-1$
             git.commit().setMessage(message).call();
             monitor.worked(1);
             return new OperationResult(Kind.SUCCESS, "Коммит создан в ветке " + branch + ".", false, true); //$NON-NLS-1$ //$NON-NLS-2$
@@ -89,6 +94,12 @@ public final class CommitOperations
     public static OperationResult commitAndPush(Repository repository, String message,
         boolean stageTracked, boolean send, boolean confirmed, IProgressMonitor monitor)
     {
+        return commitAndPush(repository, message, stageTracked, send, confirmed, false, monitor);
+    }
+
+    public static OperationResult commitAndPush(Repository repository, String message,
+        boolean stageTracked, boolean send, boolean confirmed, boolean allowProtected, IProgressMonitor monitor)
+    {
         try
         {
             String branch = repository.getBranch();
@@ -96,20 +107,17 @@ public final class CommitOperations
                 repository.getConfig(), branch);
             boolean hasRemote = config.getRemoteTrackingBranch() != null
                 || repository.getConfig().getString("remote", "origin", "url") != null; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            if (!confirmed && PROTECTED_BRANCHES.contains(branch))
+            if (!confirmed && !allowProtected && PROTECTED_BRANCHES.contains(branch))
                 return new OperationResult(Kind.NEEDS_CONFIRMATION,
-                    "Создать коммит в защищённой ветке " + branch + "?" //$NON-NLS-1$ //$NON-NLS-2$
+                    "Создать коммит в защищенной ветке " + branch + "?" //$NON-NLS-1$ //$NON-NLS-2$
                         + (send && hasRemote ? " После создания коммит будет отправлен на сервер." : "")); //$NON-NLS-1$ //$NON-NLS-2$
-            if (!confirmed && send && hasRemote && config.getRemoteTrackingBranch() == null)
-                return new OperationResult(Kind.NEEDS_CONFIRMATION,
-                    "После коммита связать ветку с origin/" + branch + " и отправить изменения?"); //$NON-NLS-1$ //$NON-NLS-2$
             OperationResult committed = safeCommit(repository, message, stageTracked, true, monitor);
             if (!committed.succeeded() || committed.kind() == Kind.NO_CHANGE)
                 return committed;
             if (!send || !hasRemote)
                 return new OperationResult(Kind.SUCCESS,
-                    committed.message() + (send ? " Коммит сохранён локально: remote не настроен." //$NON-NLS-1$
-                        : " Коммит сохранён локально: отправка отключена."), //$NON-NLS-1$
+                    committed.message() + (send ? ". Коммит сохранен локально: remote не настроен." //$NON-NLS-1$
+                        : ". Коммит сохранен локально: отправка отключена."), //$NON-NLS-1$
                     false, true);
             if (monitor.isCanceled())
                 return new OperationResult(Kind.CANCELLED,
@@ -120,11 +128,11 @@ public final class CommitOperations
                     "Коммит создан локально. " + pushed.message(), pushed.workspaceChanged(), true); //$NON-NLS-1$
             if (pushed.kind() == Kind.NEEDS_NATIVE_MERGE)
                 return new OperationResult(Kind.NEEDS_NATIVE_MERGE,
-                    committed.message() + " " + pushed.message() + " Коммит сохранён локально; после проверки " //$NON-NLS-1$
+                    committed.message() + ". " + pushed.message() + " Коммит сохранен локально; после проверки " //$NON-NLS-1$
                         + "отправьте ветку отдельно.", //$NON-NLS-1$
                     pushed.workspaceChanged(), true);
             return pushed.succeeded()
-                ? new OperationResult(Kind.SUCCESS, committed.message() + " " + pushed.message(), //$NON-NLS-1$
+                ? new OperationResult(Kind.SUCCESS, committed.message() + ". " + pushed.message(), //$NON-NLS-1$
                     pushed.workspaceChanged(), true)
                 : new OperationResult(Kind.ERROR,
                     committed.message() + " Коммит остался локально. Отправка не завершена: " //$NON-NLS-1$

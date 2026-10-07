@@ -58,7 +58,7 @@ public final class BranchOperations
                 return new OperationResult(Kind.ERROR, "Ветка не найдена: " + target); //$NON-NLS-1$
             if (startPoint != null && (!create || !startPoint.startsWith("refs/remotes/") //$NON-NLS-1$
                 || repository.resolve(startPoint) == null))
-                return new OperationResult(Kind.ERROR, "Удалённая ветка не найдена: " + startPoint); //$NON-NLS-1$
+                return new OperationResult(Kind.ERROR, "Удаленная ветка не найдена: " + startPoint); //$NON-NLS-1$
             monitor.subTask("Сохранение локальных изменений"); //$NON-NLS-1$
             RevCommit stash = git.stashCreate().setIncludeUntracked(true).call();
             if (stash != null)
@@ -106,14 +106,14 @@ public final class BranchOperations
                                 return new OperationResult(Kind.NEEDS_CHECKOUT_CLEANUP,
                                     "Локальные изменения восстановлены в исходной ветке.", true, false, conflicts); //$NON-NLS-1$
                             return new OperationResult(Kind.CONFLICT,
-                                "Конфликт при переключении отменён, но stash не удалось восстановить: " //$NON-NLS-1$
-                                    + returned.detail() + " Stash сохранён.", true); //$NON-NLS-1$
+                                "Конфликт при переключении отменен, но stash не удалось восстановить: " //$NON-NLS-1$
+                                    + returned.detail() + " Stash сохранен.", true); //$NON-NLS-1$
                         }
                         catch (GitAPIException rollbackError)
                         {
                             return new OperationResult(Kind.CONFLICT,
                                 "Не удалось завершить переключение после конфликта stash: " //$NON-NLS-1$
-                                    + rollbackError.getMessage() + " Stash сохранён: " + stashId, true); //$NON-NLS-1$
+                                    + rollbackError.getMessage() + " Stash сохранен: " + stashId, true); //$NON-NLS-1$
                         }
                     }
                     return new OperationResult(Kind.CONFLICT,

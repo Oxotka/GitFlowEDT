@@ -63,9 +63,7 @@ public class PullOperationsTest
                 Files.writeString(work.resolve("local.txt"), "dirty"); //$NON-NLS-1$ //$NON-NLS-2$
                 commit(source, seed, "remote.txt", "remote"); //$NON-NLS-1$ //$NON-NLS-2$
                 source.push().setRemote("origin").add(source.getRepository().getFullBranch()).call(); //$NON-NLS-1$
-                assertEquals(OperationResult.Kind.NEEDS_CONFIRMATION,
-                    PullOperations.smartPull(local.getRepository(), new NullProgressMonitor()).kind());
-                OperationResult result = PullOperations.smartPull(local.getRepository(), true,
+                OperationResult result = PullOperations.smartPull(local.getRepository(),
                     new NullProgressMonitor());
                 assertTrue(result.toString(), result.succeeded());
                 assertTrue(result.workspaceChanged());
@@ -80,7 +78,7 @@ public class PullOperationsTest
     }
 
     @Test
-    public void firstSmartPushPublishesBranchAfterConfirmation() throws Exception
+    public void firstSmartPushPublishesBranchWithoutConfirmation() throws Exception
     {
         Path root = Files.createTempDirectory("gitflow-publish-"); //$NON-NLS-1$
         Path bare = root.resolve("origin.git"); //$NON-NLS-1$
@@ -91,12 +89,12 @@ public class PullOperationsTest
             commit(local, work, "file.txt", "local"); //$NON-NLS-1$ //$NON-NLS-2$
             local.remoteAdd().setName("origin").setUri(new URIish(bare.toUri().toString())).call(); //$NON-NLS-1$
             String branch = local.getRepository().getBranch();
-            assertEquals(OperationResult.Kind.NEEDS_CONFIRMATION,
-                PullOperations.smartPush(local.getRepository(), new NullProgressMonitor()).kind());
             assertNull(origin.getRepository().resolve("refs/heads/" + branch)); //$NON-NLS-1$
-            OperationResult result = PullOperations.smartPush(local.getRepository(), true,
-                new NullProgressMonitor());
+            var originalHead = local.getRepository().resolve("HEAD"); //$NON-NLS-1$
+            OperationResult result = PullOperations.smartPush(local.getRepository(), new NullProgressMonitor());
             assertTrue(result.toString(), result.succeeded());
+            assertFalse(result.commitCreated());
+            assertEquals(originalHead, local.getRepository().resolve("HEAD")); //$NON-NLS-1$
             assertEquals(local.getRepository().resolve("HEAD"), //$NON-NLS-1$
                 origin.getRepository().resolve("refs/heads/" + branch)); //$NON-NLS-1$
             assertEquals("origin", local.getRepository().getConfig().getString( //$NON-NLS-1$

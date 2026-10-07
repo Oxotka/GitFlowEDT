@@ -554,6 +554,15 @@ final class BranchPicker
                 remote.dispose();
             if (tags != null && tags.getItemCount() == 0)
                 tags.dispose();
+            if (!query.isEmpty())
+            {
+                if (!local.isDisposed())
+                    expandGroups(local);
+                if (!remote.isDisposed())
+                    expandGroups(remote);
+                if (tags != null && !tags.isDisposed())
+                    expandGroups(tags);
+            }
             if (selectedRef == null || !select(selectedRef))
             {
                 selected = null;
@@ -566,6 +575,14 @@ final class BranchPicker
         {
             tree.setRedraw(true);
         }
+    }
+
+    private static void expandGroups(TreeItem item)
+    {
+        for (TreeItem child : item.getItems())
+            expandGroups(child);
+        if (item.getItemCount() > 0)
+            item.setExpanded(true);
     }
 
     private TreeItem root(String label)

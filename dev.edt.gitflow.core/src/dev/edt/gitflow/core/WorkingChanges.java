@@ -9,6 +9,9 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
+import org.eclipse.core.runtime.IProgressMonitor;
+import org.eclipse.core.runtime.NullProgressMonitor;
+
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.Status;
 import org.eclipse.jgit.api.errors.GitAPIException;
@@ -115,6 +118,24 @@ public record WorkingChanges(List<FileChange> staged, List<FileChange> unstaged)
         }
     }
 
+    public static OperationResult stage(Repository repository, List<FileChange> files, IProgressMonitor monitor)
+    {
+        IProgressMonitor progress = monitor == null ? new NullProgressMonitor() : monitor;
+        for (int offset = 0; offset < files.size(); offset += 32)
+        {
+            if (progress.isCanceled())
+                return new OperationResult(Kind.CANCELLED, "Подготовка изменений отменена"); //$NON-NLS-1$
+            List<FileChange> batch = files.subList(offset, Math.min(offset + 32, files.size()));
+            progress.subTask(batch.get(0).path());
+            OperationResult result = stage(repository, batch);
+            if (!result.succeeded())
+                return result;
+        }
+        return progress.isCanceled()
+            ? new OperationResult(Kind.CANCELLED, "Подготовка изменений отменена") //$NON-NLS-1$
+            : new OperationResult(Kind.SUCCESS, "Подготовка изменений завершена"); //$NON-NLS-1$
+    }
+
     public static OperationResult unstage(Repository repository, List<String> paths)
     {
         try
@@ -158,7 +179,7 @@ public record WorkingChanges(List<FileChange> staged, List<FileChange> unstaged)
                 return new OperationResult(Kind.ERROR,
                     "Вернуть можно только файл из последнего коммита: " + path); //$NON-NLS-1$
             Git.wrap(repository).checkout().setStartPoint(Constants.HEAD).addPath(path).call();
-            return new OperationResult(Kind.SUCCESS, "Файл возвращён к последнему коммиту: " + path, true); //$NON-NLS-1$
+            return new OperationResult(Kind.SUCCESS, "Файл возвращен к последнему коммиту: " + path, true); //$NON-NLS-1$
         }
         catch (GitAPIException e)
         {
@@ -181,7 +202,7 @@ public record WorkingChanges(List<FileChange> staged, List<FileChange> unstaged)
                 return new OperationResult(Kind.ERROR, "Недопустимый путь нового файла: " + path); //$NON-NLS-1$
             Files.delete(file);
             repository.fireEvent(new WorkingTreeModifiedEvent(null, List.of(path)));
-            return new OperationResult(Kind.SUCCESS, "Новый файл удалён: " + path, true); //$NON-NLS-1$
+            return new OperationResult(Kind.SUCCESS, "Новый файл удален: " + path, true); //$NON-NLS-1$
         }
         catch (GitAPIException | IOException e)
         {

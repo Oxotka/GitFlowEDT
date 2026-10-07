@@ -9,6 +9,7 @@ import org.eclipse.core.runtime.Platform;
 import org.eclipse.core.runtime.Status;
 import org.eclipse.jface.viewers.StructuredSelection;
 import org.eclipse.jface.viewers.TreeViewer;
+import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.layout.GridData;
@@ -78,6 +79,12 @@ public final class MergeBranchPickerHook
             Field repoField = base.getDeclaredField("repo"); //$NON-NLS-1$
             Field treeField = base.getDeclaredField("branchTree"); //$NON-NLS-1$
             Method markRef = base.getDeclaredMethod("markRef", String.class); //$NON-NLS-1$
+            Field tagsField = base.getDeclaredField("tags"); //$NON-NLS-1$
+            tagsField.setAccessible(true);
+            Object tagsNode = tagsField.get(dialog);
+            Class<?> tagNodeType = dialog.getClass().getClassLoader()
+                .loadClass("org.eclipse.egit.ui.internal.repository.tree.TagNode"); //$NON-NLS-1$
+            var tagNodeConstructor = tagNodeType.getConstructor(tagsField.getType(), Repository.class, Ref.class);
             repoField.setAccessible(true);
             treeField.setAccessible(true);
             markRef.setAccessible(true);
@@ -97,9 +104,19 @@ public final class MergeBranchPickerHook
                 {
                     viewer.setSelection(StructuredSelection.EMPTY);
                     if (choice != null)
-                        markRef.invoke(dialog, choice.ref());
+                    {
+                        if (choice.kind() == BranchPicker.Kind.TAG)
+                        {
+                            Ref ref = repository.exactRef(choice.ref());
+                            if (ref != null)
+                                viewer.setSelection(new StructuredSelection(
+                                    tagNodeConstructor.newInstance(tagsNode, repository, ref)), true);
+                        }
+                        else
+                            markRef.invoke(dialog, choice.ref());
+                    }
                 }
-                catch (ReflectiveOperationException e)
+                catch (IOException | ReflectiveOperationException e)
                 {
                     visible(original, true);
                     log(e);
@@ -121,6 +138,7 @@ public final class MergeBranchPickerHook
             visible(nativeTree, false);
             parent.layout(true, true);
             picker.focusSearch();
+            MergeDialogSettings.attach(parent);
             shell.setData(ATTACHED, Boolean.TRUE);
         }
         catch (IOException | ReflectiveOperationException | RuntimeException e)
@@ -144,6 +162,6 @@ public final class MergeBranchPickerHook
     private static void log(Exception error)
     {
         Platform.getLog(Platform.getBundle(PLUGIN_ID)).log(new Status(IStatus.WARNING,
-            PLUGIN_ID, "Штатный выбор ветки EGit сохранён: адаптер слияния не сработал.", error)); //$NON-NLS-1$
+            PLUGIN_ID, "Штатный выбор ветки EGit сохранен: адаптер слияния не сработал.", error)); //$NON-NLS-1$
     }
 }

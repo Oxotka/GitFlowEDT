@@ -20,6 +20,57 @@ import dev.edt.gitflow.core.OperationResult;
 public class CommitOperationsTest
 {
     @Test
+    public void emptyIndexDoesNotStageCommitOrPush() throws Exception
+    {
+        Path work = Files.createTempDirectory("gitflow-empty-index-"); //$NON-NLS-1$
+        try (Git git = Git.init().setDirectory(work.toFile()).call())
+        {
+            Files.writeString(work.resolve("file.txt"), "base"); //$NON-NLS-1$ //$NON-NLS-2$
+            git.add().addFilepattern("file.txt").call(); //$NON-NLS-1$
+            git.commit().setMessage("base").setAuthor("Test", "test@example.org") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                .setCommitter("Test", "test@example.org").call(); //$NON-NLS-1$ //$NON-NLS-2$
+            var head = git.getRepository().resolve("HEAD"); //$NON-NLS-1$
+            Files.writeString(work.resolve("file.txt"), "unstaged"); //$NON-NLS-1$ //$NON-NLS-2$
+            Files.writeString(work.resolve("new.txt"), "untracked"); //$NON-NLS-1$ //$NON-NLS-2$
+            var config = git.getRepository().getConfig();
+            config.setString("remote", "origin", "url", work.resolve("missing.git").toString()); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            config.save();
+            var result = CommitOperations.commitAndPush(git.getRepository(), "empty", false, true, false, true, //$NON-NLS-1$
+                new NullProgressMonitor());
+            assertEquals(OperationResult.Kind.NO_CHANGE, result.kind());
+            assertFalse(result.commitCreated());
+            assertEquals(head, git.getRepository().resolve("HEAD")); //$NON-NLS-1$
+            assertTrue(CommitOperations.stagedPaths(git.getRepository()).isEmpty());
+            assertEquals("unstaged", Files.readString(work.resolve("file.txt"))); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue(git.status().call().getUntracked().contains("new.txt")); //$NON-NLS-1$
+            assertEquals(null, config.getString("branch", git.getRepository().getBranch(), "remote")); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+    }
+
+    @Test
+    public void localProtectedCommitDoesNotConfigureUpstream() throws Exception
+    {
+        Path work = Files.createTempDirectory("gitflow-protected-permission-"); //$NON-NLS-1$
+        try (Git git = Git.init().setInitialBranch("master").setDirectory(work.toFile()).call()) //$NON-NLS-1$
+        {
+            var config = git.getRepository().getConfig();
+            config.setString("user", null, "name", "Test"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            config.setString("user", null, "email", "test@example.org"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            config.setString("remote", "origin", "url", work.resolve("origin.git").toString()); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            config.save();
+            Files.writeString(work.resolve("file.txt"), "first"); //$NON-NLS-1$ //$NON-NLS-2$
+            git.add().addFilepattern("file.txt").call(); //$NON-NLS-1$
+            assertEquals(OperationResult.Kind.NEEDS_CONFIRMATION,
+                CommitOperations.commitAndPush(git.getRepository(), "first", false, false, false, //$NON-NLS-1$
+                    new NullProgressMonitor()).kind());
+            assertTrue(CommitOperations.commitAndPush(git.getRepository(), "first", false, false, false, true, //$NON-NLS-1$
+                new NullProgressMonitor()).commitCreated());
+            assertEquals(null, config.getString("branch", "master", "remote")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            assertFalse(Files.exists(work.resolve("origin.git"))); //$NON-NLS-1$
+        }
+    }
+
+    @Test
     public void commitsOnlyIndexAndSupportsFirstCommit() throws Exception
     {
         Path work = Files.createTempDirectory("gitflow-index-commit-"); //$NON-NLS-1$
@@ -64,7 +115,7 @@ public class CommitOperationsTest
             git.remoteAdd().setName("origin").setUri(new URIish(bare.toUri().toString())).call(); //$NON-NLS-1$
             Files.writeString(work.resolve("file.txt"), "changed"); //$NON-NLS-1$ //$NON-NLS-2$
             Files.writeString(work.resolve("untracked.txt"), "leave out"); //$NON-NLS-1$ //$NON-NLS-2$
-            var result = CommitOperations.commitAndPush(git.getRepository(), "fix", true, true, true, //$NON-NLS-1$
+            var result = CommitOperations.commitAndPush(git.getRepository(), "fix", true, true, false, true, //$NON-NLS-1$
                 new NullProgressMonitor());
             assertTrue(result.toString(), result.succeeded());
             assertTrue(result.commitCreated());
@@ -151,7 +202,7 @@ public class CommitOperationsTest
                 assertEquals(OperationResult.Kind.NEEDS_NATIVE_MERGE, result.kind());
                 assertTrue(result.commitCreated());
                 assertFalse(result.workspaceChanged());
-                assertTrue(result.message().contains("Коммит сохранён локально")); //$NON-NLS-1$
+                assertTrue(result.message().contains("Коммит сохранен локально")); //$NON-NLS-1$
                 assertEquals("local", local.log().setMaxCount(1).call().iterator().next().getShortMessage()); //$NON-NLS-1$
                 assertEquals(source.getRepository().resolve("HEAD"), //$NON-NLS-1$
                     origin.getRepository().resolve("refs/heads/" + local.getRepository().getBranch())); //$NON-NLS-1$

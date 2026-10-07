@@ -27,7 +27,7 @@ import dev.edt.gitflow.core.RecentHistory;
 final class RecentHistoryPane extends Composite
 {
     private static final Object LOAD_MORE = new Object();
-    private static final String LOAD_MORE_TEXT = "Показать ещё"; //$NON-NLS-1$
+    private static final String LOAD_MORE_TEXT = "Показать еще"; //$NON-NLS-1$
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"); //$NON-NLS-1$
     private final Table table;
     private final Color dotFill;
