@@ -661,7 +661,8 @@ public class GitFlowView extends ViewPart
 
     private boolean canDiscard(FileChange change)
     {
-        return ("M".equals(change.state()) || "D".equals(change.state())) //$NON-NLS-1$ //$NON-NLS-2$
+        return ("M".equals(change.state()) || "D".equals(change.state())
+            || "C".equals(change.state()) && repositoryState == RepositoryState.MERGING) //$NON-NLS-1$ //$NON-NLS-2$
             && changes.staged().stream().noneMatch(file -> file.path().equals(change.path())
                 && "A".equals(file.state())); //$NON-NLS-1$
     }

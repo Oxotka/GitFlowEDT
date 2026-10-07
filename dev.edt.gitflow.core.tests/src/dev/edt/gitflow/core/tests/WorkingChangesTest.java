@@ -17,6 +17,52 @@ import dev.edt.gitflow.core.WorkingChanges;
 public class WorkingChangesTest
 {
     @Test
+    public void resetConflictToHeadPreservesOtherMergeResults() throws Exception
+    {
+        Path work = Files.createTempDirectory("gitflow-reset-merge-"); //$NON-NLS-1$
+        try (Git git = Git.init().setDirectory(work.toFile()).call())
+        {
+            Files.writeString(work.resolve("conflict.txt"), "base\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            Files.writeString(work.resolve("other.txt"), "base\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            commitAll(git);
+            String branch = git.getRepository().getBranch();
+            git.checkout().setCreateBranch(true).setName("feature").call(); //$NON-NLS-1$
+            Files.writeString(work.resolve("conflict.txt"), "feature\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            Files.writeString(work.resolve("other.txt"), "feature\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            commitAll(git);
+            var feature = git.getRepository().resolve("HEAD"); //$NON-NLS-1$
+            git.checkout().setName(branch).call();
+            Files.writeString(work.resolve("conflict.txt"), "head\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            commitAll(git);
+            var head = git.getRepository().resolve("HEAD"); //$NON-NLS-1$
+            git.merge().include(feature).call();
+            assertEquals(org.eclipse.jgit.lib.RepositoryState.MERGING, git.getRepository().getRepositoryState());
+
+            assertTrue(WorkingChanges.resetFileToHead(git.getRepository(), "conflict.txt").succeeded()); //$NON-NLS-1$
+            assertEquals("head\n", Files.readString(work.resolve("conflict.txt"))); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue(git.status().call().getConflicting().isEmpty());
+            assertTrue(git.status().call().getChanged().contains("other.txt")); //$NON-NLS-1$
+            assertEquals(head, git.getRepository().resolve("HEAD")); //$NON-NLS-1$
+            assertEquals(List.of(feature), git.getRepository().readMergeHeads());
+            assertEquals(org.eclipse.jgit.lib.RepositoryState.MERGING_RESOLVED, git.getRepository().getRepositoryState());
+
+            Files.writeString(work.resolve("conflict.txt"), "edit\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue(WorkingChanges.resetFileToHead(git.getRepository(), "conflict.txt").succeeded()); //$NON-NLS-1$
+            Files.writeString(work.resolve("other.txt"), "unsaved selection\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue(WorkingChanges.discardUnstagedChanges(git.getRepository()).succeeded());
+            assertEquals("feature\n", Files.readString(work.resolve("other.txt"))); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue(git.status().call().getChanged().contains("other.txt")); //$NON-NLS-1$
+        }
+    }
+
+    private static void commitAll(Git git) throws Exception
+    {
+        git.add().addFilepattern(".").call(); //$NON-NLS-1$
+        git.commit().setMessage("test").setAuthor("Test", "test@example.org") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            .setCommitter("Test", "test@example.org").call(); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    @Test
     public void cancelledPreparationLeavesIndexUntouched() throws Exception
     {
         Path work = Files.createTempDirectory("gitflow-cancel-stage-"); //$NON-NLS-1$

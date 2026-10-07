@@ -18,6 +18,8 @@ import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.events.WorkingTreeModifiedEvent;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.lib.RepositoryState;
+import org.eclipse.jgit.treewalk.TreeWalk;
 
 import dev.edt.gitflow.core.OperationResult.Kind;
 
@@ -166,22 +168,39 @@ public record WorkingChanges(List<FileChange> staged, List<FileChange> unstaged)
         }
     }
 
+    private static boolean canDiscardDuringMerge(Repository repository)
+    {
+        RepositoryState state = repository.getRepositoryState();
+        return state == RepositoryState.SAFE || state == RepositoryState.MERGING
+            || state == RepositoryState.MERGING_RESOLVED;
+    }
+
     public static OperationResult resetFileToHead(Repository repository, String path)
     {
-        if (!RepositorySupport.isSafe(repository))
+        if (!canDiscardDuringMerge(repository))
             return new OperationResult(Kind.ERROR, "Репозиторий занят другой Git-операцией."); //$NON-NLS-1$
         try
         {
             Status status = Git.wrap(repository).status().addPath(path).call();
-            if (status.getAdded().contains(path) || status.getConflicting().contains(path)
-                || !status.getModified().contains(path) && !status.getMissing().contains(path)
+            boolean conflict = status.getConflicting().contains(path);
+            if (conflict)
+            {
+                var tree = repository.resolve("HEAD^{tree}"); //$NON-NLS-1$
+                try (TreeWalk file = tree == null ? null : TreeWalk.forPath(repository, path, tree))
+                {
+                    if (file == null)
+                        return new OperationResult(Kind.ERROR, "В HEAD нет файла: " + path); //$NON-NLS-1$
+                }
+            }
+            if (status.getAdded().contains(path) || !conflict
+                && !status.getModified().contains(path) && !status.getMissing().contains(path)
                 && !status.getChanged().contains(path) && !status.getRemoved().contains(path))
                 return new OperationResult(Kind.ERROR,
                     "Вернуть можно только файл из последнего коммита: " + path); //$NON-NLS-1$
             Git.wrap(repository).checkout().setStartPoint(Constants.HEAD).addPath(path).call();
             return new OperationResult(Kind.SUCCESS, "Файл возвращен к последнему коммиту: " + path, true); //$NON-NLS-1$
         }
-        catch (GitAPIException e)
+        catch (GitAPIException | IOException e)
         {
             return new OperationResult(Kind.ERROR, "Вернуть файл не удалось: " + e.getMessage(), true); //$NON-NLS-1$
         }
@@ -212,7 +231,7 @@ public record WorkingChanges(List<FileChange> staged, List<FileChange> unstaged)
 
     public static OperationResult discardUnstagedChanges(Repository repository)
     {
-        if (!RepositorySupport.isSafe(repository))
+        if (!canDiscardDuringMerge(repository))
             return new OperationResult(Kind.ERROR, "Репозиторий занят другой Git-операцией."); //$NON-NLS-1$
         boolean workspaceChanged = false;
         Set<String> deletedFiles = new LinkedHashSet<>();

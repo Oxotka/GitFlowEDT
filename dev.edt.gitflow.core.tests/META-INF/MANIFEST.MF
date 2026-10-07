@@ -2,7 +2,7 @@ Manifest-Version: 1.0
 Bundle-ManifestVersion: 2
 Bundle-Name: Git Flow core tests
 Bundle-SymbolicName: dev.edt.gitflow.core.tests
-Bundle-Version: 0.11.3
+Bundle-Version: 0.11.4
 Bundle-RequiredExecutionEnvironment: JavaSE-17
 Require-Bundle: dev.edt.gitflow.core;bundle-version="[0.1.0,1.0.0)",
  dev.edt.gitflow.ui;bundle-version="[0.1.0,1.0.0)",
